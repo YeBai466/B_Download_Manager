@@ -264,8 +264,8 @@ input[type="text"]:focus, input[type="number"]:focus, select:focus { outline: no
 .seg-list { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
 .seg-row { display: flex; align-items: center; gap: 10px; font-size: 11px; }
 .seg-row .seg-idx { width: 72px; color: var(--muted); display: flex; align-items: center; }
-.seg-row .seg-bar { flex: 1; height: 12px; background: var(--progress-bg); border-radius: 3px; overflow: hidden; border: 1px solid #d2d7dd; }
-.seg-row .seg-fill { height: 100%; background: linear-gradient(to bottom, #5fd277, #3bb558); transition: width .25s; }
+.seg-row .seg-bar { display: block; flex: 1; height: 12px; background: var(--progress-bg); border-radius: 3px; overflow: hidden; border: 1px solid #d2d7dd; }
+.seg-row .seg-fill { display: block; height: 100%; background: linear-gradient(to bottom, #5fd277, #3bb558); transition: width .25s; }
 .seg-row .seg-pct { width: 42px; text-align: right; color: var(--muted); }
 .seg-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
 .seg-dot.ok { background: var(--progress); }
