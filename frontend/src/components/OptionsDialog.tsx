@@ -193,8 +193,8 @@ export default function OptionsDialog({ onClose, onSaved }: Props) {
                     </label>
                   </div>
                   <div className="note">
-                    普通电脑无法静默安装商店外扩展（Chrome/Edge 仅允许受管设备这么做），因此采用上面的「手动加载一次」方式，加载后永久生效。
-                    Firefox 请到 <code>about:debugging</code> 手动加载 <code>extensions/firefox</code>。
+                    扩展已发布在 Chrome 网上应用店，可一键静默安装（个人电脑同样适用）。
+                    Firefox 暂不支持策略安装，请到 <code>about:debugging</code> 手动加载 <code>extensions/firefox</code>。
                   </div>
                 </div>
               </>

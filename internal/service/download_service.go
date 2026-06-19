@@ -18,7 +18,6 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
-	"github.com/yebai/b-download-manager/internal/browserext"
 	cat "github.com/yebai/b-download-manager/internal/category"
 	"github.com/yebai/b-download-manager/internal/config"
 	"github.com/yebai/b-download-manager/internal/downloader"
@@ -45,6 +44,11 @@ const AddWindowName = "add"
 // Version is the application version reported to the browser extension.
 const Version = "1.0.0"
 
+// StoreExtensionID is the published Chrome Web Store extension ID. Because the
+// extension is store-hosted, policy force-install works on consumer machines
+// too (unlike self-hosted off-store extensions).
+const StoreExtensionID = "hgkakilajhnbpmhmpcnblioiiaomdkjp"
+
 // DownloadService is the primary Wails service. It owns the engine, store and
 // takeover server and exposes methods to the frontend.
 type DownloadService struct {
@@ -52,12 +56,11 @@ type DownloadService struct {
 	engine   *downloader.Engine
 	takeover *takeover.Server
 
-	extFiles fs.FS  // bundled chromium extension files
-	keyDir   string // dir for the persistent CRX signing key
+	extFiles fs.FS  // bundled chromium extension files (for manual "Load unpacked")
+	keyDir   string // app data dir (also where the extension is extracted)
 
 	mu         sync.RWMutex
 	settings   config.Settings
-	extBundle  *browserext.Bundle
 	pendingAdd AddPrefill
 }
 
@@ -113,34 +116,9 @@ func (s *DownloadService) ServiceStartup(ctx context.Context, _ application.Serv
 			// Non-fatal: another instance may hold the port.
 			fmt.Println("takeover server:", err)
 		}
-		// Build/publish the CRX so the install prompt and Options page can use it,
-		// but never install without explicit user consent.
-		if err := s.buildExtension(cfg.TakeoverPort); err != nil {
-			fmt.Println("build extension:", err)
-		}
 	}
 	return nil
 }
-
-// buildExtension packs the signed CRX for the given port and publishes it on the
-// local server.
-func (s *DownloadService) buildExtension(port int) error {
-	if s.extFiles == nil {
-		return fmt.Errorf("no bundled extension")
-	}
-	bundle, err := browserext.Build(s.extFiles, s.keyDir, extCodebase(port))
-	if err != nil {
-		return err
-	}
-	s.mu.Lock()
-	s.extBundle = bundle
-	s.mu.Unlock()
-	s.takeover.SetExtension(bundle.CRX, bundle.UpdateXML)
-	return nil
-}
-
-func extCodebase(port int) string  { return fmt.Sprintf("http://127.0.0.1:%d/ext", port) }
-func extUpdateURL(port int) string { return fmt.Sprintf("http://127.0.0.1:%d/ext/updates.xml", port) }
 
 // ServiceShutdown stops downloads and releases resources.
 func (s *DownloadService) ServiceShutdown() error {
@@ -377,62 +355,35 @@ func (s *DownloadService) ResolveSaveDir(category string) string {
 }
 
 // ExtStatus reports the browser-extension force-install state. Chrome/Edge mean
-// the policy registry entry exists (not that the browser finished installing);
-// ManifestFetched/CrxFetched prove a browser actually pulled the files.
+// the policy registry entry exists for the store extension ID.
 type ExtStatus struct {
-	ID              string `json:"id"`
-	Available       bool   `json:"available"`       // a signed CRX has been built
-	Chrome          bool   `json:"chrome"`          // policy configured for Chrome
-	Edge            bool   `json:"edge"`            // policy configured for Edge
-	ManifestFetched bool   `json:"manifestFetched"` // a browser fetched updates.xml
-	CrxFetched      bool   `json:"crxFetched"`      // a browser fetched the CRX
-	ServerRunning   bool   `json:"serverRunning"`   // local server is listening
+	ID     string `json:"id"`     // the Chrome Web Store extension ID
+	Chrome bool   `json:"chrome"` // policy configured for Chrome
+	Edge   bool   `json:"edge"`   // policy configured for Edge
 }
 
 // BrowserExtensionStatus returns the current install status (no elevation).
 func (s *DownloadService) BrowserExtensionStatus() ExtStatus {
-	s.mu.RLock()
-	bundle := s.extBundle
-	s.mu.RUnlock()
-	if bundle == nil {
-		return ExtStatus{ServerRunning: s.takeover.Running()}
-	}
-	st := policy.GetStatus(bundle.ID)
-	manifest, crx := s.takeover.FetchInfo()
-	return ExtStatus{
-		ID:              bundle.ID,
-		Available:       true,
-		Chrome:          st.Chrome,
-		Edge:            st.Edge,
-		ManifestFetched: manifest,
-		CrxFetched:      crx,
-		ServerRunning:   s.takeover.Running(),
-	}
+	st := policy.GetStatus(StoreExtensionID)
+	return ExtStatus{ID: StoreExtensionID, Chrome: st.Chrome, Edge: st.Edge}
 }
 
-// InstallBrowserExtension force-installs the extension into Chrome/Edge via
-// policy. This prompts for administrator elevation (UAC). The takeover server is
-// started if needed so browsers can fetch the CRX.
-func (s *DownloadService) InstallBrowserExtension() error {
-	s.mu.RLock()
-	port := s.settings.TakeoverPort
-	s.mu.RUnlock()
-	if err := s.takeover.Start(port); err != nil {
-		return fmt.Errorf("无法启动本地服务（端口 %d 可能被占用）：请确认没有重复运行本程序，或在「连接/浏览器接管」中更换端口。原始错误：%w", port, err)
-	}
-	if err := s.buildExtension(port); err != nil {
+// InstallBrowserExtension force-installs the published Web Store extension into
+// the selected browsers (names like "Chrome"/"Edge"; empty = all installed) via
+// enterprise policy. Prompts for administrator elevation (UAC). Because the
+// extension is store-hosted, this works on consumer machines too.
+func (s *DownloadService) InstallBrowserExtension(browsers []string) error {
+	if err := policy.Install(StoreExtensionID, policy.StoreUpdateURL, browsers); err != nil {
 		return err
 	}
-	s.mu.RLock()
-	bundle := s.extBundle
-	s.mu.RUnlock()
-	if bundle == nil {
-		return fmt.Errorf("扩展打包失败")
-	}
-	return policy.Install(bundle.ID, extUpdateURL(port))
+	return nil
 }
 
-// ManualInstallInfo is returned to the UI to guide manual extension loading.
+// UninstallBrowserExtension removes the force-install policy for the selected
+// browsers (empty = all). Prompts for UAC.
+func (s *DownloadService) UninstallBrowserExtension(browsers []string) error {
+	return policy.Uninstall(StoreExtensionID, browsers)
+}
 type ManualInstallInfo struct {
 	Dir string `json:"dir"` // folder containing the unpacked extension
 }
@@ -496,17 +447,6 @@ func (s *DownloadService) RestartBrowsers() (string, error) {
 
 // RunningBrowsers returns which supported browsers are currently running.
 func (s *DownloadService) RunningBrowsers() []string { return policy.RunningBrowsers() }
-
-// UninstallBrowserExtension removes the force-install policy (prompts for UAC).
-func (s *DownloadService) UninstallBrowserExtension() error {
-	s.mu.RLock()
-	bundle := s.extBundle
-	s.mu.RUnlock()
-	if bundle == nil {
-		return fmt.Errorf("扩展未就绪")
-	}
-	return policy.Uninstall(bundle.ID)
-}
 
 // ChooseFolder opens a native directory picker and returns the selected path.
 func (s *DownloadService) ChooseFolder() (string, error) {

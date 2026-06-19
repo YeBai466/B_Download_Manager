@@ -6,8 +6,9 @@ interface Props {
 }
 
 // Shown on startup when browser takeover is enabled (unless the user chose to
-// ignore). Guides a one-time manual "Load unpacked" install for the chosen
-// browser. No silent/automatic install is performed.
+// ignore). The extension is published on the Chrome Web Store, so it offers a
+// one-click policy install (with a manual fallback). Nothing is installed
+// without the user clicking install.
 export default function ExtPromptDialog({ onLater, onIgnore }: Props) {
   return (
     <div className="overlay" onMouseDown={(e) => e.stopPropagation()}>
@@ -16,7 +17,7 @@ export default function ExtPromptDialog({ onLater, onIgnore }: Props) {
         <div className="content">
           <p style={{ margin: "0 0 12px", lineHeight: 1.7 }}>
             安装浏览器扩展后，Chrome / Edge 里的下载会自动交给本程序多线程下载。
-            普通电脑需要<strong>手动加载一次</strong>（约 20 秒，永久有效）——勾选浏览器后点下面按钮即可。
+            勾选浏览器后点「一键安装」即可（需一次管理员授权，装后重启浏览器生效）。
           </p>
           <ManualInstall />
         </div>

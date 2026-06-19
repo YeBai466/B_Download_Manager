@@ -18,9 +18,14 @@ import (
 
 // forcelistKeys are the per-browser policy paths holding the force-install list.
 var forcelistKeys = map[string]string{
-	"chrome": `SOFTWARE\Policies\Google\Chrome\ExtensionInstallForcelist`,
-	"edge":   `SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallForcelist`,
+	"Chrome": `SOFTWARE\Policies\Google\Chrome\ExtensionInstallForcelist`,
+	"Edge":   `SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallForcelist`,
 }
+
+// StoreUpdateURL is the Chrome Web Store update manifest. Extensions published
+// on the store use this URL; force-installing a store extension via policy works
+// even on unmanaged (consumer) machines, unlike self-hosted off-store ones.
+const StoreUpdateURL = "https://clients2.google.com/service/update2/crx"
 
 // Status reports, per browser, whether our extension id is force-installed.
 type Status struct {
@@ -31,8 +36,8 @@ type Status struct {
 // GetStatus reads the policy registry (no elevation required).
 func GetStatus(id string) Status {
 	return Status{
-		Chrome: hasForcedEntry(forcelistKeys["chrome"], id),
-		Edge:   hasForcedEntry(forcelistKeys["edge"], id),
+		Chrome: hasForcedEntry(forcelistKeys["Chrome"], id),
+		Edge:   hasForcedEntry(forcelistKeys["Edge"], id),
 	}
 }
 
@@ -56,26 +61,53 @@ func hasForcedEntry(keyPath, id string) bool {
 	return false
 }
 
-// Install writes the force-install entry for both browsers with one elevation.
-// updateURL is the Omaha update manifest URL the local server serves.
-func Install(id, updateURL string) error {
+// Install writes the force-install entry for the given browsers (by friendly
+// name, e.g. "Chrome"/"Edge"; empty = all supported) with one UAC elevation.
+// updateURL is the Omaha update manifest URL; for a Web Store extension use
+// StoreUpdateURL. The forcelist value is "<id>;<updateURL>".
+func Install(id, updateURL string, browsers []string) error {
+	if updateURL == "" {
+		updateURL = StoreUpdateURL
+	}
 	val := fmt.Sprintf("%s;%s", id, updateURL)
 	var b strings.Builder
 	b.WriteString("$ErrorActionPreference='Stop'\n")
-	for _, key := range forcelistKeys {
+	for name, key := range forcelistKeys {
+		if !wantBrowser(browsers, name) {
+			continue
+		}
 		fmt.Fprintf(&b, "New-Item -Path 'HKLM:\\%s' -Force | Out-Null\n", key)
-		fmt.Fprintf(&b, "New-ItemProperty -Path 'HKLM:\\%s' -Name '1' -Value '%s' -PropertyType String -Force | Out-Null\n", key, val)
+		// Use the extension id as the value name so repeated installs are
+		// idempotent and per-extension (instead of a fixed "1" slot).
+		fmt.Fprintf(&b, "New-ItemProperty -Path 'HKLM:\\%s' -Name '%s' -Value '%s' -PropertyType String -Force | Out-Null\n", key, id, val)
 	}
 	return runElevated(b.String())
 }
 
-// Uninstall removes the force-install entries for both browsers.
-func Uninstall(id string) error {
+// Uninstall removes the force-install entry for the given browsers (empty = all).
+func Uninstall(id string, browsers []string) error {
 	var b strings.Builder
-	for _, key := range forcelistKeys {
+	for name, key := range forcelistKeys {
+		if !wantBrowser(browsers, name) {
+			continue
+		}
+		// Remove both the id-named value and the legacy "1" slot, if present.
+		fmt.Fprintf(&b, "Remove-ItemProperty -Path 'HKLM:\\%s' -Name '%s' -ErrorAction SilentlyContinue\n", key, id)
 		fmt.Fprintf(&b, "Remove-ItemProperty -Path 'HKLM:\\%s' -Name '1' -ErrorAction SilentlyContinue\n", key)
 	}
 	return runElevated(b.String())
+}
+
+func wantBrowser(browsers []string, name string) bool {
+	if len(browsers) == 0 {
+		return true
+	}
+	for _, b := range browsers {
+		if strings.EqualFold(b, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // runElevated writes script to a temp .ps1 and runs it via an elevated

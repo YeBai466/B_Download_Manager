@@ -28,6 +28,9 @@ export const api = {
   openFolder: (id: string) => DownloadService.OpenFolder(id),
   installedBrowsers: () => DownloadService.InstalledBrowsers(),
   prepareManualInstall: () => DownloadService.PrepareManualInstall(),
+  extStatus: () => DownloadService.BrowserExtensionStatus(),
+  installExt: (browsers: string[]) => DownloadService.InstallBrowserExtension(browsers),
+  uninstallExt: (browsers: string[]) => DownloadService.UninstallBrowserExtension(browsers),
   resolveSaveDir: (category: string) => DownloadService.ResolveSaveDir(category),
   showAddWindow: (p: { url?: string; filename?: string; headers?: Record<string, string> }) =>
     DownloadService.ShowAddWindow({ url: p.url ?? "", filename: p.filename ?? "", headers: p.headers ?? {} }),

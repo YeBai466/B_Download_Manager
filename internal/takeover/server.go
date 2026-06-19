@@ -33,22 +33,6 @@ type Server struct {
 	srv     *http.Server
 	port    int
 	running bool
-
-	extMu     sync.RWMutex
-	extCRX    []byte
-	extUpdate []byte
-
-	// Diagnostics: set when a browser fetches the update manifest / CRX, which
-	// proves the policy install reached the download stage.
-	manifestFetched bool
-	crxFetched      bool
-}
-
-// FetchInfo reports whether a browser has fetched the update manifest and CRX.
-func (s *Server) FetchInfo() (manifest, crx bool) {
-	s.extMu.RLock()
-	defer s.extMu.RUnlock()
-	return s.manifestFetched, s.crxFetched
 }
 
 // New creates a takeover server. onDownload is invoked for each intercepted
@@ -88,8 +72,6 @@ func (s *Server) Start(port int) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ping", s.handlePing)
 	mux.HandleFunc("/download", s.handleDownload)
-	mux.HandleFunc("/ext/updates.xml", s.handleUpdateXML)
-	mux.HandleFunc("/ext/bdm.crx", s.handleCRX)
 
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
@@ -124,46 +106,6 @@ func (s *Server) Stop() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	return srv.Shutdown(ctx)
-}
-
-// SetExtension publishes the signed CRX and its update manifest so browsers can
-// fetch them for policy force-install.
-func (s *Server) SetExtension(crx, updateXML []byte) {
-	s.extMu.Lock()
-	s.extCRX = crx
-	s.extUpdate = updateXML
-	s.extMu.Unlock()
-}
-
-func (s *Server) handleUpdateXML(w http.ResponseWriter, r *http.Request) {
-	s.extMu.Lock()
-	data := s.extUpdate
-	if data != nil {
-		s.manifestFetched = true
-	}
-	s.extMu.Unlock()
-	if data == nil {
-		http.NotFound(w, r)
-		return
-	}
-	w.Header().Set("Content-Type", "application/xml")
-	_, _ = w.Write(data)
-}
-
-func (s *Server) handleCRX(w http.ResponseWriter, r *http.Request) {
-	s.extMu.Lock()
-	data := s.extCRX
-	if data != nil {
-		s.crxFetched = true
-	}
-	s.extMu.Unlock()
-	if data == nil {
-		http.NotFound(w, r)
-		return
-	}
-	w.Header().Set("Content-Type", "application/x-chrome-extension")
-	w.Header().Set("Content-Disposition", "attachment; filename=bdm.crx")
-	_, _ = w.Write(data)
 }
 
 func (s *Server) handlePing(w http.ResponseWriter, r *http.Request) {
