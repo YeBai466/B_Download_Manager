@@ -44,7 +44,7 @@ const MainWindowName = "main"
 const AddWindowName = "add"
 
 // Version is the application version reported to the browser extension.
-const Version = "1.0.2"
+const Version = "1.0.3"
 
 // StoreExtensionID is the published Chrome Web Store extension ID. Because the
 // extension is store-hosted, policy force-install works on consumer machines
