@@ -240,7 +240,7 @@ export default function App() {
           <div className="dialog" style={{ width: 380 }} onMouseDown={(e) => e.stopPropagation()}>
             <div className="titlebar">{t("about.title")}</div>
             <div className="content" style={{ textAlign: "center", lineHeight: 1.8 }}>
-              <div style={{ fontSize: 16, fontWeight: 600 }}>B Download Manager</div>
+              <div style={{ fontSize: 16, fontWeight: 600 }}>Better Download Manager</div>
               <div>{t("about.version", { v: APP_VERSION })}</div>
               <div style={{ color: "var(--muted)", fontSize: 12 }}>{t("about.tagline")}</div>
             </div>

@@ -109,7 +109,7 @@ func (s *Server) Stop() error {
 }
 
 func (s *Server) handlePing(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, map[string]string{"app": "B Download Manager", "version": s.version})
+	writeJSON(w, map[string]string{"app": "Better Download Manager", "version": s.version})
 }
 
 func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {

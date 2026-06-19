@@ -4,7 +4,7 @@
         <key>CFBundlePackageType</key>
             <string>APPL</string>
         <key>CFBundleName</key>
-            <string>B Download Manager</string>
+            <string>Better Download Manager</string>
         <key>CFBundleExecutable</key>
             <string>b_download_manager.exe</string>
         <key>CFBundleIdentifier</key>

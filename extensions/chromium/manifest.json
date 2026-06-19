@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "B Download Manager Integration",
+  "name": "Better Download Manager Integration",
   "version": "1.0.0",
-  "description": "拦截浏览器下载并交给 B Download Manager 多线程下载。",
+  "description": "拦截浏览器下载并交给 Better Download Manager 多线程下载。",
   "permissions": ["downloads", "cookies", "storage"],
   "host_permissions": ["<all_urls>"],
   "background": {
@@ -10,6 +10,6 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "B Download Manager"
+    "default_title": "Better Download Manager"
   }
 }

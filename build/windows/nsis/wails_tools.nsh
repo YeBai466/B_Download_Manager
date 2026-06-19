@@ -11,7 +11,7 @@
     !define INFO_COMPANYNAME "yebai"
 !endif
 !ifndef INFO_PRODUCTNAME
-    !define INFO_PRODUCTNAME "B Download Manager"
+    !define INFO_PRODUCTNAME "Better Download Manager"
 !endif
 !ifndef INFO_PRODUCTVERSION
     !define INFO_PRODUCTVERSION "0.1.0"

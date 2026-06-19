@@ -7,9 +7,9 @@
     <key>CFBundleIdentifier</key>
     <string>com.yebai.bdownloadmanager.dev</string>
     <key>CFBundleName</key>
-    <string>B Download Manager (Dev)</string>
+    <string>Better Download Manager (Dev)</string>
     <key>CFBundleDisplayName</key>
-    <string>B Download Manager (Dev)</string>
+    <string>Better Download Manager (Dev)</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

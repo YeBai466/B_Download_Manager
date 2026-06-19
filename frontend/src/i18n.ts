@@ -49,7 +49,7 @@ export function useLang(): Lang {
 const dict: Record<Lang, Record<string, string>> = {
   zh: {
     // app / menus
-    "app.name": "B Download Manager",
+    "app.name": "Better Download Manager",
     "menu.task": "任务",
     "menu.view": "查看",
     "menu.help": "帮助",
@@ -60,7 +60,7 @@ const dict: Record<Lang, Record<string, string>> = {
     "menu.refresh": "刷新列表",
     "menu.options": "选项…",
     "menu.checkUpdate": "检查更新…",
-    "menu.about": "关于 B Download Manager",
+    "menu.about": "关于 Better Download Manager",
     // statusbar
     "status.total": "共 {n} 个任务",
     "status.active": "下载中 {n}",
@@ -268,7 +268,7 @@ const dict: Record<Lang, Record<string, string>> = {
     "fmt.hourMin": "{h} 时 {m} 分",
   },
   en: {
-    "app.name": "B Download Manager",
+    "app.name": "Better Download Manager",
     "menu.task": "Tasks",
     "menu.view": "View",
     "menu.help": "Help",
@@ -279,7 +279,7 @@ const dict: Record<Lang, Record<string, string>> = {
     "menu.refresh": "Refresh List",
     "menu.options": "Options…",
     "menu.checkUpdate": "Check for Updates…",
-    "menu.about": "About B Download Manager",
+    "menu.about": "About Better Download Manager",
     "status.total": "{n} task(s)",
     "status.active": "Downloading {n}",
     "about.title": "About",

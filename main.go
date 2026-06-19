@@ -42,7 +42,7 @@ func main() {
 	lang := svc.GetSettings().Language
 
 	app := application.New(application.Options{
-		Name:        "B Download Manager",
+		Name:        "Better Download Manager",
 		Description: tr(lang, "仿 IDM 多线程下载器", "IDM-style multithreaded downloader"),
 		Services: []application.Service{
 			application.NewService(svc),
@@ -67,7 +67,7 @@ func main() {
 
 	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:             service.MainWindowName,
-		Title:            "B Download Manager",
+		Title:            "Better Download Manager",
 		Width:            1080,
 		Height:           680,
 		MinWidth:         860,
@@ -105,7 +105,7 @@ func setupTray(app *application.App, window application.Window, lang string) {
 	if len(trayIcon) > 0 {
 		tray.SetIcon(trayIcon)
 	}
-	tray.SetTooltip("B Download Manager")
+	tray.SetTooltip("Better Download Manager")
 
 	menu := application.NewMenu()
 	menu.Add(tr(lang, "显示主窗口", "Show Window")).OnClick(func(*application.Context) {

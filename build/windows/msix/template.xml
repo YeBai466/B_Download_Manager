@@ -10,11 +10,11 @@
     <Installer
         Path="b_download_manager.exe"
         Arguments=""
-        InstallLocation="C:\Program Files\yebai\B Download Manager">
+        InstallLocation="C:\Program Files\yebai\Better Download Manager">
     </Installer>
     <PackageInformation
-        PackageName="B Download Manager"
-        PackageDisplayName="B Download Manager"
+        PackageName="Better Download Manager"
+        PackageDisplayName="Better Download Manager"
         PublisherName="CN=yebai"
         PublisherDisplayName="yebai"
         Version="0.1.0.0"
@@ -27,7 +27,7 @@
             <Application
                 Id="com.yebai.bdownloadmanager"
                 Description="仿 IDM 多线程下载器"
-                DisplayName="B Download Manager"
+                DisplayName="Better Download Manager"
                 ExecutableName="b_download_manager.exe"
                 EntryPoint="Windows.FullTrustApplication">
                 
@@ -41,7 +41,7 @@
         </Dependencies>
         <Properties>
             <Framework>false</Framework>
-            <DisplayName>B Download Manager</DisplayName>
+            <DisplayName>Better Download Manager</DisplayName>
             <PublisherDisplayName>yebai</PublisherDisplayName>
             <Description>仿 IDM 多线程下载器</Description>
             <Logo>Assets\AppIcon.png</Logo>

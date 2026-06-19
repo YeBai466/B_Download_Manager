@@ -14,7 +14,7 @@ import (
 )
 
 // Repo is the GitHub "owner/repo" the releases are published under.
-const Repo = "YeBai466/B_Download_Manager"
+const Repo = "YeBai466/Better-Download-Manager"
 
 // Result describes the outcome of an update check.
 type Result struct {
