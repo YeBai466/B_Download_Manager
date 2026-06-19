@@ -72,6 +72,58 @@ func downloadSegment(
 	}
 }
 
+// streamSegment writes an already-open response body into seg, used by the
+// fast-start path where segment 0 reuses the connection that doubled as the
+// probe. For a multi-segment ranged download the body (requested as bytes=0-)
+// streams the whole file, so we stop once seg's range is filled and let the
+// other segments cover the rest; the surplus in flight is discarded when the
+// body is closed. For a single-segment / non-ranged download we read to EOF.
+func streamSegment(
+	ctx context.Context,
+	resp *http.Response,
+	seg *Segment,
+	w *fileWriter,
+	ranged bool,
+	progress *int64,
+) error {
+	defer resp.Body.Close()
+
+	capped := ranged && seg.End >= 0
+	offset := seg.Current()
+	buf := make([]byte, 64*1024)
+	for {
+		if capped && seg.Complete() {
+			return nil
+		}
+		n, readErr := resp.Body.Read(buf)
+		if n > 0 {
+			if capped {
+				if rem := seg.Remaining(); int64(n) > rem {
+					n = int(rem)
+				}
+			}
+			if _, werr := w.WriteAt(buf[:n], offset); werr != nil {
+				return werr
+			}
+			offset += int64(n)
+			seg.add(int64(n))
+			atomic.AddInt64(progress, int64(n))
+			if capped && seg.Complete() {
+				return nil
+			}
+		}
+		if readErr == io.EOF {
+			return nil
+		}
+		if readErr != nil {
+			return readErr
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+}
+
 // buildSegments splits totalSize into n contiguous segments.
 func buildSegments(totalSize int64, n int) []*Segment {
 	if n < 1 {

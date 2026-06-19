@@ -3,7 +3,9 @@ package downloader
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -318,10 +320,11 @@ func (e *Engine) run(ctx context.Context, m *managed) {
 	t.setStatus(StatusConnecting, "")
 	e.emitManaged(m)
 
-	if err := e.prepare(ctx, client, t); err != nil {
-		e.fail(t, ctx, err)
-		return
-	}
+	// Resume path: a task we already know the layout of (paused→resumed in the
+	// same session, restored from the DB, or with a sidecar .bdmeta) skips probing
+	// and just refetches the remaining ranges. Fresh tasks take the fast-start path
+	// below, which starts streaming bytes on the very first connection.
+	resumable := e.loadResume(t)
 
 	w, err := openPartFile(t.SavePath)
 	if err != nil {
@@ -329,13 +332,18 @@ func (e *Engine) run(ctx context.Context, m *managed) {
 		return
 	}
 
-	t.setStatus(StatusDownloading, "")
-	e.emitManaged(m)
-
-	if err := e.transfer(ctx, client, t, w); err != nil {
+	var xferErr error
+	if resumable {
+		t.setStatus(StatusDownloading, "")
+		e.emitManaged(m)
+		xferErr = e.transfer(ctx, client, t, w)
+	} else {
+		xferErr = e.fastStart(ctx, client, t, w, m)
+	}
+	if xferErr != nil {
 		w.Close()
 		_ = writeMeta(t)
-		e.fail(t, ctx, err)
+		e.fail(t, ctx, xferErr)
 		return
 	}
 
@@ -349,17 +357,18 @@ func (e *Engine) run(ctx context.Context, m *managed) {
 	e.emitManaged(m)
 }
 
-// prepare probes the URL (if needed) and (re)builds the segment plan, loading
-// any existing resume metadata.
-func (e *Engine) prepare(ctx context.Context, client *http.Client, t *Task) error {
+// loadResume reports whether the task can resume from a known segment layout
+// (already in memory, or recovered from the sidecar .bdmeta file). When true the
+// segments are populated and no network probe is needed; when false the task is
+// a fresh download handled by fastStart.
+func (e *Engine) loadResume(t *Task) bool {
 	t.mu.RLock()
 	hasSegments := len(t.Segments) > 0
 	t.mu.RUnlock()
 	if hasSegments {
-		return nil
+		return true
 	}
 
-	// Try to resume from sidecar metadata first.
 	if m, err := readMeta(t.SavePath); err == nil && m.TotalSize > 0 {
 		t.mu.Lock()
 		t.TotalSize = m.TotalSize
@@ -375,26 +384,126 @@ func (e *Engine) prepare(ctx context.Context, client *http.Client, t *Task) erro
 		}
 		t.mu.Unlock()
 		t.recalcDownloaded()
-		return nil
+		return true
 	}
+	return false
+}
 
-	res, err := probe(ctx, client, t.URL, t.headersCopy())
+// fastStart downloads a fresh task with no pre-flight probe: it opens a single
+// open-ended request (Range: bytes=0-) whose response headers reveal the size and
+// range support, and whose body is streamed straight to disk as segment 0. The
+// moment those headers arrive we know the total size, flip to Downloading and —
+// if the server supports ranges — fan out the remaining segments on their own
+// connections. This removes the dead round-trip that made downloads look stalled
+// for the first few seconds, so they start at full speed like IDM.
+func (e *Engine) fastStart(ctx context.Context, client *http.Client, t *Task, w *fileWriter, m *managed) error {
+	headers := t.headersCopy()
+	url := t.URL
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
+	applyHeaders(req, headers)
+	req.Header.Set("Range", "bytes=0-")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	// resp.Body is handed to the segment-0 streamer, which closes it.
+
+	if resp.StatusCode >= 400 {
+		resp.Body.Close()
+		return fmt.Errorf("server returned %s", resp.Status)
+	}
+
+	total := int64(-1)
+	ranged := false
+	if resp.StatusCode == http.StatusPartialContent {
+		ranged = true
+		if n := parseContentRangeTotal(resp.Header.Get("Content-Range")); n > 0 {
+			total = n
+		} else if resp.ContentLength > 0 {
+			total = resp.ContentLength
+		}
+	} else { // 200 OK: server ignored the range request
+		if strings.EqualFold(resp.Header.Get("Accept-Ranges"), "bytes") {
+			ranged = true
+		}
+		if resp.ContentLength > 0 {
+			total = resp.ContentLength
+		}
+	}
+	// Without a known size we cannot split into ranges; stream on one connection.
+	if total <= 0 {
+		ranged = false
+	}
+
 	t.mu.Lock()
-	t.TotalSize = res.TotalSize
-	t.Resumable = res.Resumable
-	t.MIME = res.MIME
+	t.TotalSize = total
+	t.Resumable = ranged
+	if t.MIME == "" {
+		t.MIME = resp.Header.Get("Content-Type")
+	}
 	if t.Filename == "" {
-		t.Filename = res.Filename
+		t.Filename = resolveFilename(resp, url)
 	}
 	conns := t.Connections
-	if !res.Resumable {
+	if !ranged {
 		conns = 1
 	}
-	t.Segments = buildSegments(res.TotalSize, conns)
+	t.Segments = buildSegments(total, conns)
+	segs := t.Segments
 	t.mu.Unlock()
+
+	// Size is known now, so progress, ETA and per-thread bars come alive at once.
+	t.setStatus(StatusDownloading, "")
+	e.emitManaged(m)
+
+	var progress int64
+	var wg sync.WaitGroup
+	errCh := make(chan error, len(segs))
+
+	// Segment 0 consumes the already-open response body — bytes are flowing from
+	// the first packet, with no extra handshake.
+	wg.Add(1)
+	go func(s *Segment) {
+		defer wg.Done()
+		if err := streamSegment(ctx, resp, s, w, ranged, &progress); err != nil {
+			errCh <- err
+		}
+	}(segs[0])
+
+	// Remaining segments open their own ranged connections in parallel.
+	for i := 1; i < len(segs); i++ {
+		wg.Add(1)
+		go func(s *Segment) {
+			defer wg.Done()
+			if err := downloadSegment(ctx, client, url, headers, s, w, ranged, &progress); err != nil {
+				errCh <- err
+			}
+		}(segs[i])
+	}
+
+	stop := make(chan struct{})
+	go e.reportProgress(t, &progress, stop)
+
+	wg.Wait()
+	close(stop)
+	close(errCh)
+
+	t.recalcDownloaded()
+	_ = writeMeta(t)
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	for err := range errCh {
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -477,7 +586,14 @@ func (e *Engine) reportProgress(t *Task, progress *int64, stop <-chan struct{}) 
 			lastTime = now
 
 			t.mu.Lock()
-			t.Speed = int64(alpha*instant + (1-alpha)*float64(t.Speed))
+			// Snap to the real rate on the first sample so the readout shows the
+			// true speed immediately instead of creeping up from zero; smooth
+			// thereafter.
+			if t.Speed == 0 {
+				t.Speed = int64(instant)
+			} else {
+				t.Speed = int64(alpha*instant + (1-alpha)*float64(t.Speed))
+			}
 			t.mu.Unlock()
 			t.recalcDownloaded()
 			if e.isActive(t.ID) {

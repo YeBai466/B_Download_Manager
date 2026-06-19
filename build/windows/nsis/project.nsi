@@ -23,13 +23,18 @@ Unicode true
 ## !define INFO_COMPANYNAME    "My Company" # Default "yebai"
 ## !define INFO_PRODUCTNAME    "My Product Name" # Default "B Download Manager"
 ## !define INFO_PRODUCTVERSION "1.0.0"     # Default "0.1.0"
-## !define INFO_COPYRIGHT      "(c) Now, My Company" # Default "© 2026, My Company"
+## !define INFO_COPYRIGHT      "(c) Now, My Company" # Default "(c) 2026, My Company"
 ###
 ## !define PRODUCT_EXECUTABLE  "Application.exe"      # Default "${INFO_PROJECTNAME}.exe"
 ## !define UNINST_KEY_NAME     "UninstKeyInRegistry"  # Default "${INFO_COMPANYNAME}${INFO_PRODUCTNAME}"
 ####
 ## !define REQUEST_EXECUTION_LEVEL "admin"            # Default "admin"  see also https://nsis.sourceforge.io/Docs/Chapter4.html
 ## !define WAILS_INSTALL_SCOPE     "user"             # Default "machine" - set to "user" for per-user install ($LOCALAPPDATA) without UAC prompt
+####
+## Pin the product version so the installer's metadata matches the app release.
+####
+!define INFO_PRODUCTVERSION "1.0.4"
+
 ####
 ## Include the wails tools
 ####
@@ -84,6 +89,35 @@ ShowInstDetails show # This will always show the installation details.
 
 Function .onInit
    !insertmacro wails.checkArchitecture
+
+   ## Auto-detect an existing installation and reuse its folder so an upgrade
+   ## installs in place without the user having to point the installer at the
+   ## right directory. The previous install records its location in the uninstall
+   ## registry key's "DisplayIcon" value (= "<InstallDir>\app.exe"). When nothing
+   ## is found we default to the D: drive (falling back to Program Files when
+   ## there is no D: drive), instead of always using Program Files.
+   SetRegView 64
+   StrCpy $0 ""
+   ReadRegStr $0 HKLM "${UNINST_KEY}" "DisplayIcon"
+   ${If} $0 == ""
+       ReadRegStr $0 HKCU "${UNINST_KEY}" "DisplayIcon"
+   ${EndIf}
+
+   StrCpy $1 ""
+   ${If} $0 != ""
+       ${GetParent} "$0" $1   # strip the executable name to get the install dir
+   ${EndIf}
+
+   ${If} $1 != ""
+       ## Found a prior install -> upgrade in place.
+       StrCpy $INSTDIR "$1"
+   ${ElseIf} ${FileExists} "D:\*.*"
+       ## No prior install but a D: drive exists -> default there.
+       StrCpy $INSTDIR "D:\${INFO_PRODUCTNAME}"
+   ${Else}
+       ## No D: drive -> fall back to Program Files.
+       StrCpy $INSTDIR "$PROGRAMFILES64\${INFO_COMPANYNAME}\${INFO_PRODUCTNAME}"
+   ${EndIf}
 FunctionEnd
 
 Section

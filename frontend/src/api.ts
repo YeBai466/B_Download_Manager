@@ -39,6 +39,7 @@ export const api = {
     DownloadService.ShowAddWindow({ url: p.url ?? "", filename: p.filename ?? "", headers: p.headers ?? {} }),
   consumePendingAdd: () => DownloadService.ConsumePendingAdd(),
   checkForUpdates: () => DownloadService.CheckForUpdates(),
+  downloadUpdate: (downloadUrl: string) => DownloadService.DownloadUpdate(downloadUrl),
   openURL: (url: string) => DownloadService.OpenURL(url),
 };
 

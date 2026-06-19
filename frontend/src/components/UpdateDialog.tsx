@@ -16,12 +16,23 @@ interface Props {
   onClose: () => void;
 }
 
-// UpdateDialog shows the new version and its release notes (changelog). It does
-// not auto-update — the user downloads the installer; reinstalling preserves all
-// data/settings (they live in %AppData%, not the install dir).
+// UpdateDialog shows the new version and its release notes (changelog). The
+// "Download Update" button pulls the installer through the app itself (a normal
+// download task) rather than opening a browser; running it upgrades in place and
+// preserves all data/settings (they live in %AppData%, not the install dir).
 export default function UpdateDialog({ info, onClose }: Props) {
-  const download = () => {
-    api.openURL(info.downloadUrl || info.releaseUrl);
+  const download = async () => {
+    if (info.downloadUrl) {
+      try {
+        await api.downloadUpdate(info.downloadUrl);
+        onClose();
+        return;
+      } catch {
+        // Fall through to opening the release page in the browser.
+      }
+    }
+    api.openURL(info.releaseUrl || info.downloadUrl);
+    onClose();
   };
 
   return (

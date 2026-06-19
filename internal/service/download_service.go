@@ -44,7 +44,7 @@ const MainWindowName = "main"
 const AddWindowName = "add"
 
 // Version is the application version reported to the browser extension.
-const Version = "1.0.3"
+const Version = "1.0.4"
 
 // StoreExtensionID is the published Chrome Web Store extension ID. Because the
 // extension is store-hosted, policy force-install works on consumer machines
@@ -487,6 +487,25 @@ func (s *DownloadService) CheckForUpdates() (updates.Result, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	return updates.Check(ctx, Version)
+}
+
+// DownloadUpdate adds the new release's installer as a download task and starts
+// it immediately, then focuses the main window — so "Download Update" pulls the
+// installer through the app itself instead of bouncing the user to a browser.
+// The completed installer auto-detects the existing install location and upgrades
+// in place. Returns an error (so the UI can fall back to the release page) when no
+// direct installer URL is available.
+func (s *DownloadService) DownloadUpdate(downloadURL string) (downloader.TaskInfo, error) {
+	url := strings.TrimSpace(downloadURL)
+	if url == "" {
+		return downloader.TaskInfo{}, fmt.Errorf("没有可用的安装包下载地址")
+	}
+	info, err := s.AddURL(AddRequest{URL: url, AutoStart: true})
+	if err != nil {
+		return downloader.TaskInfo{}, err
+	}
+	s.focusWindow()
+	return info, nil
 }
 
 // OpenURL opens a URL in the user's default browser (used for the release page
