@@ -70,6 +70,49 @@ func TestServiceAddAndDownload(t *testing.T) {
 	}
 }
 
+func TestSaveSettingsAppliesRuntimeDownloadPolicy(t *testing.T) {
+	data := make([]byte, 512*1024)
+	rand.New(rand.NewSource(11)).Read(data)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Accept-Ranges", "bytes")
+		http.ServeContent(w, r, "data.bin", time.Now(), newReadSeeker(data))
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	svc, err := New(filepath.Join(dir, "test.db"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.ServiceShutdown()
+
+	cfg := config.Default()
+	cfg.DownloadDir = dir
+	cfg.Categorize = false
+	cfg.Proxy = proxy.Settings{Mode: proxy.ModeNone}
+	cfg.TakeoverEnabled = false
+	cfg.MaxConcurrent = 1
+	cfg.Connections = 1
+	cfg.SpeedLimit = 256 * 1024
+	if _, err := svc.SaveSettings(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Now()
+	info, err := svc.AddURL(AddRequest{URL: srv.URL, Filename: "limited.bin", AutoStart: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	final := waitDone(t, svc, info.ID)
+	elapsed := time.Since(start)
+	if final.Status != downloader.StatusCompleted {
+		t.Fatalf("status=%s err=%s", final.Status, final.Error)
+	}
+	if elapsed < 1200*time.Millisecond {
+		t.Fatalf("runtime speed limit did not apply: elapsed=%s", elapsed)
+	}
+}
+
 func waitDone(t *testing.T, svc *DownloadService, id string) downloader.TaskInfo {
 	t.Helper()
 	deadline := time.After(20 * time.Second)

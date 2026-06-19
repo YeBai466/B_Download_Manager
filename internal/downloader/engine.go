@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,11 +21,16 @@ const DefaultConnections = 8
 // Config configures an Engine. The callbacks let the host (Wails service) react
 // to task updates without the engine depending on the UI or storage layers.
 type Config struct {
-	MaxConcurrent int                               // max simultaneously downloading tasks
-	ClientFactory func(proxy.Settings) *http.Client // builds the HTTP client (proxy-aware)
-	OnUpdate      func(info TaskInfo)               // throttled progress + status changes
-	OnPersist     func(rec Record)                  // durable state changes (status only)
-	OnRemoved     func(id string)                   // task removed
+	MaxConcurrent  int                               // max simultaneously downloading tasks
+	MaxConnections int                               // max simultaneous HTTP transfers across all tasks
+	SpeedLimit     int64                             // global bytes/sec, 0 = unlimited
+	Retries        int                               // retries per ranged chunk
+	StallTimeout   time.Duration                     // no-progress timeout per response
+	MetaInterval   time.Duration                     // periodic resume-state flush interval
+	ClientFactory  func(proxy.Settings) *http.Client // builds the HTTP client (proxy-aware)
+	OnUpdate       func(info TaskInfo)               // throttled progress + status changes
+	OnPersist      func(rec Record)                  // durable state changes (status only)
+	OnRemoved      func(id string)                   // task removed
 }
 
 // Engine manages the task queue, scheduling and lifecycle of downloads.
@@ -36,6 +42,9 @@ type Engine struct {
 	order       []string
 	activeCount int
 	closed      bool
+
+	limiter     *speedLimiter
+	connections *connectionLimiter
 }
 
 type managed struct {
@@ -48,9 +57,20 @@ type managed struct {
 
 // NewEngine creates an engine with sensible defaults applied to cfg.
 func NewEngine(cfg Config) *Engine {
-	if cfg.MaxConcurrent < 1 {
-		cfg.MaxConcurrent = 5
-	}
+	rt := normalizeRuntimeConfig(RuntimeConfig{
+		MaxConcurrent:  cfg.MaxConcurrent,
+		MaxConnections: cfg.MaxConnections,
+		SpeedLimit:     cfg.SpeedLimit,
+		Retries:        cfg.Retries,
+		StallTimeout:   cfg.StallTimeout,
+		MetaInterval:   cfg.MetaInterval,
+	})
+	cfg.MaxConcurrent = rt.MaxConcurrent
+	cfg.MaxConnections = rt.MaxConnections
+	cfg.SpeedLimit = rt.SpeedLimit
+	cfg.Retries = rt.Retries
+	cfg.StallTimeout = rt.StallTimeout
+	cfg.MetaInterval = rt.MetaInterval
 	if cfg.ClientFactory == nil {
 		cfg.ClientFactory = func(proxy.Settings) *http.Client { return &http.Client{} }
 	}
@@ -63,11 +83,32 @@ func NewEngine(cfg Config) *Engine {
 	if cfg.OnRemoved == nil {
 		cfg.OnRemoved = func(string) {}
 	}
-	return &Engine{cfg: cfg, tasks: map[string]*managed{}}
+	return &Engine{
+		cfg:         cfg,
+		tasks:       map[string]*managed{},
+		limiter:     newSpeedLimiter(cfg.SpeedLimit),
+		connections: newConnectionLimiter(cfg.MaxConnections),
+	}
 }
 
 // ErrNotFound is returned when an operation references an unknown task id.
 var ErrNotFound = errors.New("task not found")
+
+// UpdateRuntime applies settings that can change while the app is running.
+func (e *Engine) UpdateRuntime(rt RuntimeConfig) {
+	rt = normalizeRuntimeConfig(rt)
+	e.mu.Lock()
+	e.cfg.MaxConcurrent = rt.MaxConcurrent
+	e.cfg.MaxConnections = rt.MaxConnections
+	e.cfg.SpeedLimit = rt.SpeedLimit
+	e.cfg.Retries = rt.Retries
+	e.cfg.StallTimeout = rt.StallTimeout
+	e.cfg.MetaInterval = rt.MetaInterval
+	e.connections = newConnectionLimiter(rt.MaxConnections)
+	e.mu.Unlock()
+	e.limiter.SetRate(rt.SpeedLimit)
+	e.schedule()
+}
 
 // AddOptions describes a new download to add.
 type AddOptions struct {
@@ -324,7 +365,7 @@ func (e *Engine) run(ctx context.Context, m *managed) {
 	// same session, restored from the DB, or with a sidecar .bdmeta) skips probing
 	// and just refetches the remaining ranges. Fresh tasks take the fast-start path
 	// below, which starts streaming bytes on the very first connection.
-	resumable := e.loadResume(t)
+	resumable := e.loadResume(ctx, client, t)
 
 	w, err := openPartFile(t.SavePath)
 	if err != nil {
@@ -336,9 +377,9 @@ func (e *Engine) run(ctx context.Context, m *managed) {
 	if resumable {
 		t.setStatus(StatusDownloading, "")
 		e.emitManaged(m)
-		xferErr = e.transfer(ctx, client, t, w)
+		xferErr = e.transferV2(ctx, client, t, w)
 	} else {
-		xferErr = e.fastStart(ctx, client, t, w, m)
+		xferErr = e.fastStartV2(ctx, client, t, w, m)
 	}
 	if xferErr != nil {
 		w.Close()
@@ -357,36 +398,406 @@ func (e *Engine) run(ctx context.Context, m *managed) {
 	e.emitManaged(m)
 }
 
-// loadResume reports whether the task can resume from a known segment layout
-// (already in memory, or recovered from the sidecar .bdmeta file). When true the
-// segments are populated and no network probe is needed; when false the task is
-// a fresh download handled by fastStart.
-func (e *Engine) loadResume(t *Task) bool {
+// loadResume validates saved byte ranges before allowing a ranged resume.
+func (e *Engine) loadResume(ctx context.Context, client *http.Client, t *Task) bool {
 	t.mu.RLock()
+	hasChunks := len(t.Chunks) > 0
 	hasSegments := len(t.Segments) > 0
+	ranged := t.Resumable
 	t.mu.RUnlock()
-	if hasSegments {
-		return true
-	}
 
-	if m, err := readMeta(t.SavePath); err == nil && m.TotalSize > 0 {
-		t.mu.Lock()
-		t.TotalSize = m.TotalSize
-		t.Resumable = m.Resumable
-		t.MIME = m.MIME
-		if t.Filename == "" {
-			t.Filename = m.Filename
-		}
-		t.Segments = make([]*Segment, len(m.Segments))
-		for i := range m.Segments {
-			s := m.Segments[i]
-			t.Segments[i] = &s
-		}
-		t.mu.Unlock()
+	if hasChunks && ranged && e.validateResume(ctx, client, t) {
 		t.recalcDownloaded()
 		return true
 	}
+	if hasSegments && !hasChunks && ranged {
+		e.migrateSegmentsToChunks(t)
+		if e.validateResume(ctx, client, t) {
+			t.recalcDownloaded()
+			return true
+		}
+	}
+
+	if m, err := readMeta(t.SavePath); err == nil && m.TotalSize > 0 {
+		if e.applyMetaIfSafe(ctx, client, t, m) {
+			t.recalcDownloaded()
+			return true
+		}
+		e.resetPartial(t)
+		return false
+	}
+	if hasChunks || hasSegments {
+		e.resetPartial(t)
+	}
 	return false
+}
+
+func (e *Engine) applyMetaIfSafe(ctx context.Context, client *http.Client, t *Task, m *metaFile) bool {
+	if m.URL != "" && m.URL != t.URL {
+		return false
+	}
+	if !m.Resumable || m.TotalSize <= 0 {
+		return false
+	}
+	t.mu.Lock()
+	t.TotalSize = m.TotalSize
+	t.Resumable = m.Resumable
+	t.MIME = m.MIME
+	t.ETag = m.ETag
+	t.LastModified = m.LastModified
+	t.FinalURL = m.FinalURL
+	if t.Filename == "" {
+		t.Filename = m.Filename
+	}
+	t.Segments = make([]*Segment, len(m.Segments))
+	for i := range m.Segments {
+		s := m.Segments[i]
+		t.Segments[i] = &s
+	}
+	if len(m.Chunks) > 0 {
+		t.Chunks = make([]*Chunk, len(m.Chunks))
+		for i := range m.Chunks {
+			c := m.Chunks[i]
+			t.Chunks[i] = &c
+		}
+	} else {
+		t.Chunks = nil
+	}
+	t.mu.Unlock()
+	if len(m.Chunks) == 0 {
+		e.migrateSegmentsToChunks(t)
+	}
+	return e.validateResume(ctx, client, t)
+}
+
+func (e *Engine) validateResume(ctx context.Context, client *http.Client, t *Task) bool {
+	t.mu.RLock()
+	total := t.TotalSize
+	ranged := t.Resumable
+	url := t.URL
+	headers := t.headersCopy()
+	chunks := append([]*Chunk(nil), t.Chunks...)
+	identity := responseIdentity{ETag: t.ETag, LastModified: t.LastModified, FinalURL: t.FinalURL, TotalSize: t.TotalSize}
+	savePath := t.SavePath
+	t.mu.RUnlock()
+	if !ranged || total <= 0 || len(chunks) == 0 {
+		return false
+	}
+	info, err := os.Stat(partPath(savePath))
+	if err != nil || info.Size() > total {
+		return false
+	}
+	if sumChunks(chunks) > info.Size() {
+		return false
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return false
+	}
+	applyHeaders(req, headers)
+	req.Header.Set("Range", "bytes=0-0")
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusPartialContent {
+		return false
+	}
+	_, _, remoteTotal, ok := parseContentRange(resp.Header.Get("Content-Range"))
+	if !ok || remoteTotal != total {
+		return false
+	}
+	if identity.ETag != "" && resp.Header.Get("ETag") != "" && resp.Header.Get("ETag") != identity.ETag {
+		return false
+	}
+	if identity.LastModified != "" && resp.Header.Get("Last-Modified") != "" && resp.Header.Get("Last-Modified") != identity.LastModified {
+		return false
+	}
+	t.mu.Lock()
+	if t.ETag == "" {
+		t.ETag = resp.Header.Get("ETag")
+	}
+	if t.LastModified == "" {
+		t.LastModified = resp.Header.Get("Last-Modified")
+	}
+	if t.FinalURL == "" && resp.Request != nil && resp.Request.URL != nil {
+		t.FinalURL = resp.Request.URL.String()
+	}
+	t.mu.Unlock()
+	return true
+}
+
+func (e *Engine) migrateSegmentsToChunks(t *Task) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.Chunks = make([]*Chunk, 0, len(t.Segments))
+	for _, s := range t.Segments {
+		if s == nil {
+			continue
+		}
+		t.Chunks = append(t.Chunks, &Chunk{
+			Index: s.Index, Start: s.Start, End: s.End, Downloaded: s.loaded(),
+		})
+	}
+}
+
+func (e *Engine) resetPartial(t *Task) {
+	removeMeta(t.SavePath)
+	removePartial(t.SavePath)
+	t.resetTransferState()
+}
+
+func sumChunks(chunks []*Chunk) int64 {
+	var total int64
+	for _, c := range chunks {
+		if c != nil {
+			total += c.loaded()
+		}
+	}
+	return total
+}
+
+func (e *Engine) fastStartV2(ctx context.Context, client *http.Client, t *Task, w *fileWriter, m *managed) error {
+	headers := t.headersCopy()
+	url := t.URL
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	applyHeaders(req, headers)
+	req.Header.Set("Range", "bytes=0-")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+
+	if resp.StatusCode >= 400 {
+		resp.Body.Close()
+		return fmt.Errorf("server returned %s", resp.Status)
+	}
+
+	total := int64(-1)
+	ranged := false
+	if resp.StatusCode == http.StatusPartialContent {
+		if _, _, n, ok := parseContentRange(resp.Header.Get("Content-Range")); ok && n > 0 {
+			total = n
+			ranged = true
+		}
+	} else if resp.StatusCode == http.StatusOK {
+		if resp.ContentLength > 0 {
+			total = resp.ContentLength
+		}
+	} else {
+		resp.Body.Close()
+		return fmt.Errorf("unexpected status %s", resp.Status)
+	}
+	if total <= 0 {
+		ranged = false
+	}
+
+	var plan transferPlan
+	if ranged {
+		plan = buildTransferPlan(total, t.Connections)
+	} else {
+		plan = transferPlan{workers: 1, chunks: []*Chunk{{Index: 0, Start: 0, End: total - 1}}, lanes: buildWorkerLanes(total, 1)}
+	}
+	identity := responseIdentity{
+		ETag:         resp.Header.Get("ETag"),
+		LastModified: resp.Header.Get("Last-Modified"),
+		TotalSize:    total,
+	}
+	if resp.Request != nil && resp.Request.URL != nil {
+		identity.FinalURL = resp.Request.URL.String()
+	}
+
+	t.mu.Lock()
+	t.TotalSize = total
+	t.Resumable = ranged
+	t.ETag = identity.ETag
+	t.LastModified = identity.LastModified
+	t.FinalURL = identity.FinalURL
+	if t.MIME == "" {
+		t.MIME = resp.Header.Get("Content-Type")
+	}
+	if t.Filename == "" {
+		t.Filename = resolveFilename(resp, url)
+	}
+	t.Chunks = plan.chunks
+	t.Segments = plan.lanes
+	t.mu.Unlock()
+
+	t.setStatus(StatusDownloading, "")
+	e.emitManaged(m)
+
+	var progress int64
+	stop := make(chan struct{})
+	go e.reportProgress(t, &progress, stop)
+	go e.persistProgress(t, stop)
+	opts := e.transferOptions(identity)
+
+	if !ranged {
+		err := streamOpenResponse(ctx, resp, plan.chunks[0], plan.lanes[0], w, &progress, opts, total > 0)
+		close(stop)
+		t.recalcDownloaded()
+		_ = writeMeta(t)
+		return err
+	}
+
+	errCh := make(chan error, plan.workers)
+	q := newChunkQueue(plan.chunks)
+	first := q.nextChunk()
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := streamOpenResponse(ctx, resp, first, plan.lanes[0], w, &progress, opts, true); err != nil {
+			errCh <- err
+			return
+		}
+		e.consumeChunks(ctx, client, url, headers, q, plan.lanes[0], w, &progress, opts, errCh)
+	}()
+
+	for i := 1; i < plan.workers; i++ {
+		lane := plan.lanes[i]
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			e.consumeChunks(ctx, client, url, headers, q, lane, w, &progress, opts, errCh)
+		}()
+	}
+
+	wg.Wait()
+	close(stop)
+	close(errCh)
+	t.recalcDownloaded()
+	_ = writeMeta(t)
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	for err := range errCh {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e *Engine) transferV2(ctx context.Context, client *http.Client, t *Task, w *fileWriter) error {
+	t.mu.RLock()
+	chunks := append([]*Chunk(nil), t.Chunks...)
+	lanes := append([]*Segment(nil), t.Segments...)
+	headers := t.headersCopy()
+	url := t.URL
+	identity := responseIdentity{ETag: t.ETag, LastModified: t.LastModified, FinalURL: t.FinalURL, TotalSize: t.TotalSize}
+	t.mu.RUnlock()
+	if len(chunks) == 0 {
+		return fmt.Errorf("no resumable chunks")
+	}
+	if len(lanes) == 0 {
+		lanes = buildWorkerLanes(identity.TotalSize, smartConnections(identity.TotalSize, DefaultConnections))
+		t.mu.Lock()
+		t.Segments = lanes
+		t.mu.Unlock()
+	}
+
+	var progress int64
+	stop := make(chan struct{})
+	go e.reportProgress(t, &progress, stop)
+	go e.persistProgress(t, stop)
+
+	q := newChunkQueue(chunks)
+	workers := len(lanes)
+	errCh := make(chan error, workers)
+	opts := e.transferOptions(identity)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		lane := lanes[i]
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			e.consumeChunks(ctx, client, url, headers, q, lane, w, &progress, opts, errCh)
+		}()
+	}
+
+	wg.Wait()
+	close(stop)
+	close(errCh)
+	t.recalcDownloaded()
+	_ = writeMeta(t)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	for err := range errCh {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e *Engine) consumeChunks(
+	ctx context.Context,
+	client *http.Client,
+	url string,
+	headers map[string]string,
+	q *chunkQueue,
+	lane *Segment,
+	w *fileWriter,
+	progress *int64,
+	opts transferOptions,
+	errCh chan<- error,
+) {
+	for {
+		c := q.nextChunk()
+		if c == nil {
+			return
+		}
+		if err := downloadChunkWithRetry(ctx, client, url, headers, c, lane, w, progress, opts); err != nil {
+			errCh <- err
+			return
+		}
+	}
+}
+
+func (e *Engine) transferOptions(id responseIdentity) transferOptions {
+	e.mu.Lock()
+	opts := transferOptions{
+		Retries:      e.cfg.Retries,
+		StallTimeout: e.cfg.StallTimeout,
+		Limiter:      e.limiter,
+		Connections:  e.connections,
+		Identity:     id,
+	}
+	e.mu.Unlock()
+	return opts
+}
+
+func (e *Engine) persistProgress(t *Task, stop <-chan struct{}) {
+	e.mu.Lock()
+	interval := e.cfg.MetaInterval
+	e.mu.Unlock()
+	if interval <= 0 {
+		interval = defaultMetaInterval
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			if e.isActive(t.ID) {
+				_ = writeMeta(t)
+				e.cfg.OnPersist(t.Record())
+			}
+		}
+	}
 }
 
 // fastStart downloads a fresh task with no pre-flight probe: it opens a single
@@ -397,6 +808,10 @@ func (e *Engine) loadResume(t *Task) bool {
 // connections. This removes the dead round-trip that made downloads look stalled
 // for the first few seconds, so they start at full speed like IDM.
 func (e *Engine) fastStart(ctx context.Context, client *http.Client, t *Task, w *fileWriter, m *managed) error {
+	return e.fastStartV2(ctx, client, t, w, m)
+}
+
+func (e *Engine) fastStartLegacy(ctx context.Context, client *http.Client, t *Task, w *fileWriter, m *managed) error {
 	headers := t.headersCopy()
 	url := t.URL
 
@@ -510,6 +925,10 @@ func (e *Engine) fastStart(ctx context.Context, client *http.Client, t *Task, w 
 // transfer runs the segment workers concurrently and reports progress until all
 // complete, the context is cancelled, or one fails.
 func (e *Engine) transfer(ctx context.Context, client *http.Client, t *Task, w *fileWriter) error {
+	return e.transferV2(ctx, client, t, w)
+}
+
+func (e *Engine) transferLegacy(ctx context.Context, client *http.Client, t *Task, w *fileWriter) error {
 	t.mu.RLock()
 	segs := t.Segments
 	ranged := t.Resumable

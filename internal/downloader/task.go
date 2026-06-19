@@ -30,6 +30,15 @@ type Segment struct {
 	Downloaded int64 `json:"downloaded"`
 }
 
+// Chunk is a resumable byte range used by the dynamic scheduler. Unlike
+// Segment, which is now just a UI lane, chunks are the durable download plan.
+type Chunk struct {
+	Index      int   `json:"index"`
+	Start      int64 `json:"start"`
+	End        int64 `json:"end"`
+	Downloaded int64 `json:"downloaded"`
+}
+
 // Downloaded is written by the segment worker and read concurrently by
 // snapshots, so it is accessed atomically via these helpers.
 
@@ -50,26 +59,49 @@ func (s *Segment) Complete() bool { return s.loaded() >= s.size() }
 
 func (s *Segment) size() int64 { return s.End - s.Start + 1 }
 
+func (c *Chunk) loaded() int64 { return atomic.LoadInt64(&c.Downloaded) }
+func (c *Chunk) add(n int64)   { atomic.AddInt64(&c.Downloaded, n) }
+func (c *Chunk) Current() int64 {
+	return c.Start + c.loaded()
+}
+func (c *Chunk) Remaining() int64 {
+	if c.End < c.Start {
+		return -1
+	}
+	return c.End - c.Current() + 1
+}
+func (c *Chunk) Complete() bool {
+	if c.End < c.Start {
+		return false
+	}
+	return c.loaded() >= c.size()
+}
+func (c *Chunk) size() int64 { return c.End - c.Start + 1 }
+
 // Task is the persistent + runtime state of a single download. All access goes
 // through the mutex; use Snapshot to obtain a copy safe for serialization.
 type Task struct {
 	mu sync.RWMutex
 
-	ID          string
-	URL         string
-	Filename    string
-	SavePath    string // full target path: dir + filename
-	Category    string
-	TotalSize   int64 // -1 when the server does not report a size
-	Resumable   bool  // server advertises Accept-Ranges: bytes
-	Connections int   // desired number of parallel connections
-	Headers     map[string]string
-	Proxy       proxy.Settings
-	MIME        string
+	ID           string
+	URL          string
+	Filename     string
+	SavePath     string // full target path: dir + filename
+	Category     string
+	TotalSize    int64 // -1 when the server does not report a size
+	Resumable    bool  // server advertises Accept-Ranges: bytes
+	Connections  int   // desired number of parallel connections
+	Headers      map[string]string
+	Proxy        proxy.Settings
+	MIME         string
+	ETag         string
+	LastModified string
+	FinalURL     string
 
 	Status     Status
 	Error      string
-	Segments   []*Segment
+	Segments   []*Segment // UI lanes; Chunks are the durable transfer ranges.
+	Chunks     []*Chunk
 	Downloaded int64 // aggregate bytes written across all segments
 	Speed      int64 // bytes/sec, exponentially smoothed
 	CreatedAt  time.Time
@@ -157,10 +189,25 @@ func (t *Task) getStatus() Status {
 // recalcDownloaded recomputes the aggregate from segment progress.
 func (t *Task) recalcDownloaded() {
 	var total int64
-	for _, s := range t.Segments {
-		total += s.loaded()
+	if len(t.Chunks) > 0 {
+		for _, c := range t.Chunks {
+			total += c.loaded()
+		}
+	} else {
+		for _, s := range t.Segments {
+			total += s.loaded()
+		}
 	}
 	t.mu.Lock()
 	t.Downloaded = total
+	t.mu.Unlock()
+}
+
+func (t *Task) resetTransferState() {
+	t.mu.Lock()
+	t.Downloaded = 0
+	t.Speed = 0
+	t.Segments = nil
+	t.Chunks = nil
 	t.mu.Unlock()
 }

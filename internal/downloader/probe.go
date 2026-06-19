@@ -14,11 +14,13 @@ import (
 
 // ProbeResult holds the metadata discovered about a download target.
 type ProbeResult struct {
-	TotalSize int64 // -1 when unknown
-	Resumable bool  // server honours byte ranges
-	Filename  string
-	MIME      string
-	FinalURL  string // after redirects
+	TotalSize    int64 // -1 when unknown
+	Resumable    bool  // server honours byte ranges
+	Filename     string
+	MIME         string
+	FinalURL     string // after redirects
+	ETag         string
+	LastModified string
 }
 
 // Probe is the exported entry point used by the service layer to preview a URL
@@ -52,9 +54,11 @@ func probe(ctx context.Context, client *http.Client, rawURL string, headers map[
 	}
 
 	res := &ProbeResult{
-		TotalSize: -1,
-		MIME:      resp.Header.Get("Content-Type"),
-		FinalURL:  resp.Request.URL.String(),
+		TotalSize:    -1,
+		MIME:         resp.Header.Get("Content-Type"),
+		FinalURL:     resp.Request.URL.String(),
+		ETag:         resp.Header.Get("ETag"),
+		LastModified: resp.Header.Get("Last-Modified"),
 	}
 
 	// A 206 with Content-Range means ranges are supported and gives total size.
@@ -64,11 +68,9 @@ func probe(ctx context.Context, client *http.Client, rawURL string, headers map[
 			res.TotalSize = total
 		}
 	} else {
-		// 200 OK: server ignored the range. Fall back to Content-Length and the
-		// Accept-Ranges header to decide whether segmented download is possible.
-		if strings.EqualFold(resp.Header.Get("Accept-Ranges"), "bytes") {
-			res.Resumable = true
-		}
+		// 200 OK means the server ignored the range request. Some servers still
+		// advertise Accept-Ranges incorrectly, so do not segment unless we see a
+		// real 206 response.
 		if cl := resp.Header.Get("Content-Length"); cl != "" {
 			if n, err := strconv.ParseInt(cl, 10, 64); err == nil {
 				res.TotalSize = n
@@ -156,12 +158,46 @@ func parseContentRangeTotal(cr string) int64 {
 	return n
 }
 
+func parseContentRange(cr string) (start, end, total int64, ok bool) {
+	cr = strings.TrimSpace(cr)
+	if !strings.HasPrefix(strings.ToLower(cr), "bytes ") {
+		return 0, 0, 0, false
+	}
+	rest := strings.TrimSpace(cr[len("bytes "):])
+	slash := strings.LastIndex(rest, "/")
+	dash := strings.Index(rest, "-")
+	if slash < 0 || dash < 0 || dash > slash {
+		return 0, 0, 0, false
+	}
+	var err error
+	start, err = strconv.ParseInt(strings.TrimSpace(rest[:dash]), 10, 64)
+	if err != nil {
+		return 0, 0, 0, false
+	}
+	end, err = strconv.ParseInt(strings.TrimSpace(rest[dash+1:slash]), 10, 64)
+	if err != nil {
+		return 0, 0, 0, false
+	}
+	totalStr := strings.TrimSpace(rest[slash+1:])
+	if totalStr == "*" {
+		return start, end, -1, true
+	}
+	total, err = strconv.ParseInt(totalStr, 10, 64)
+	if err != nil {
+		return 0, 0, 0, false
+	}
+	return start, end, total, true
+}
+
 func applyHeaders(req *http.Request, headers map[string]string) {
 	if req.Header.Get("User-Agent") == "" {
 		req.Header.Set("User-Agent", defaultUserAgent)
 	}
 	for k, v := range headers {
 		req.Header.Set(k, v)
+	}
+	if req.Header.Get("Accept-Encoding") == "" {
+		req.Header.Set("Accept-Encoding", "identity")
 	}
 }
 

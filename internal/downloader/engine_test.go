@@ -3,6 +3,7 @@ package downloader
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"io"
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -150,8 +152,36 @@ func assertFileEquals(t *testing.T, path string, want []byte) {
 	}
 }
 
+func newTestReadSeeker(b []byte) *testReadSeeker { return &testReadSeeker{b: b} }
+
+type testReadSeeker struct {
+	b   []byte
+	pos int64
+}
+
+func (r *testReadSeeker) Read(p []byte) (int, error) {
+	if r.pos >= int64(len(r.b)) {
+		return 0, io.EOF
+	}
+	n := copy(p, r.b[r.pos:])
+	r.pos += int64(n)
+	return n, nil
+}
+
+func (r *testReadSeeker) Seek(offset int64, whence int) (int64, error) {
+	switch whence {
+	case 0:
+		r.pos = offset
+	case 1:
+		r.pos += offset
+	case 2:
+		r.pos = int64(len(r.b)) + offset
+	}
+	return r.pos, nil
+}
+
 func TestSegmentedDownload(t *testing.T) {
-	data := makeData(1 << 20) // 1 MiB
+	data := makeData(16 << 20) // large enough for smart multi-connection
 	srv := rangeServer(t, data, true, 0)
 	defer srv.Close()
 
@@ -173,6 +203,30 @@ func TestSegmentedDownload(t *testing.T) {
 	}
 	if len(info.Segments) < 2 {
 		t.Fatalf("expected multiple segments, got %d", len(info.Segments))
+	}
+	assertFileEquals(t, dst, data)
+}
+
+func TestSmallFileUsesSingleConnection(t *testing.T) {
+	data := makeData(1 << 20)
+	srv := rangeServer(t, data, true, 0)
+	defer srv.Close()
+
+	updates := make(chan TaskInfo, 256)
+	e := newTestEngine(updates)
+	defer e.Shutdown()
+
+	dst := filepath.Join(t.TempDir(), "small.bin")
+	_, err := e.Add(AddOptions{ID: "t1", URL: srv.URL, SavePath: dst, Connections: 8, AutoStart: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := waitForStatus(t, updates, StatusCompleted, StatusError)
+	if info.Status != StatusCompleted {
+		t.Fatalf("status=%s err=%s", info.Status, info.Error)
+	}
+	if len(info.Segments) != 1 {
+		t.Fatalf("expected single segment for small file, got %d", len(info.Segments))
 	}
 	assertFileEquals(t, dst, data)
 }
@@ -289,6 +343,185 @@ func TestPauseResume(t *testing.T) {
 	info := waitForStatus(t, updates, StatusCompleted, StatusError)
 	if info.Status != StatusCompleted {
 		t.Fatalf("status=%s err=%s", info.Status, info.Error)
+	}
+	assertFileEquals(t, dst, data)
+}
+
+func TestPauseResumeNoRangeRestartsSafely(t *testing.T) {
+	data := makeData(1 << 20)
+	srv := rangeServer(t, data, false, 15*time.Millisecond)
+	defer srv.Close()
+
+	updates := make(chan TaskInfo, 256)
+	e := newTestEngine(updates)
+	defer e.Shutdown()
+
+	dst := filepath.Join(t.TempDir(), "out.bin")
+	if _, err := e.Add(AddOptions{ID: "t1", URL: srv.URL, SavePath: dst, Connections: 4, AutoStart: true}); err != nil {
+		t.Fatal(err)
+	}
+	waitForStatus(t, updates, StatusDownloading)
+	time.Sleep(120 * time.Millisecond)
+	if err := e.Pause("t1"); err != nil {
+		t.Fatal(err)
+	}
+	paused, err := e.Get("t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if paused.Status != StatusPaused {
+		t.Fatalf("expected paused, got %s", paused.Status)
+	}
+	if paused.Downloaded <= 0 || paused.Downloaded >= int64(len(data)) {
+		t.Fatalf("expected partial progress, got %d/%d", paused.Downloaded, len(data))
+	}
+	if err := e.Start("t1"); err != nil {
+		t.Fatal(err)
+	}
+	info := waitForStatus(t, updates, StatusCompleted, StatusError)
+	if info.Status != StatusCompleted {
+		t.Fatalf("status=%s err=%s", info.Status, info.Error)
+	}
+	assertFileEquals(t, dst, data)
+}
+
+func TestResumeMetaURLMismatchRestarts(t *testing.T) {
+	data := makeData(512 * 1024)
+	srv := rangeServer(t, data, true, 0)
+	defer srv.Close()
+
+	dir := t.TempDir()
+	dst := filepath.Join(dir, "out.bin")
+	if err := os.WriteFile(partPath(dst), []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := metaFile{
+		Version: 2, URL: "http://example.invalid/old", TotalSize: int64(len(data)), Resumable: true,
+		Chunks:   []Chunk{{Index: 0, Start: 0, End: int64(len(data)) - 1, Downloaded: 5}},
+		Segments: []Segment{{Index: 0, Start: 0, End: int64(len(data)) - 1, Downloaded: 5}},
+	}
+	mb, _ := json.Marshal(&m)
+	if err := os.WriteFile(metaPath(dst), mb, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	updates := make(chan TaskInfo, 256)
+	e := newTestEngine(updates)
+	defer e.Shutdown()
+	if _, err := e.Add(AddOptions{ID: "t1", URL: srv.URL, SavePath: dst, Connections: 4, AutoStart: true}); err != nil {
+		t.Fatal(err)
+	}
+	info := waitForStatus(t, updates, StatusCompleted, StatusError)
+	if info.Status != StatusCompleted {
+		t.Fatalf("status=%s err=%s", info.Status, info.Error)
+	}
+	assertFileEquals(t, dst, data)
+}
+
+func TestResumeMetaETagMismatchRestarts(t *testing.T) {
+	data := makeData(512 * 1024)
+	var etag atomic.Value
+	etag.Store(`"new"`)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", etag.Load().(string))
+		w.Header().Set("Accept-Ranges", "bytes")
+		http.ServeContent(w, r, "data.bin", time.Now(), newTestReadSeeker(data))
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	dst := filepath.Join(dir, "out.bin")
+	if err := os.WriteFile(partPath(dst), data[:1024], 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := metaFile{
+		Version: 2, URL: srv.URL, TotalSize: int64(len(data)), Resumable: true, ETag: `"old"`,
+		Chunks:   []Chunk{{Index: 0, Start: 0, End: int64(len(data)) - 1, Downloaded: 1024}},
+		Segments: []Segment{{Index: 0, Start: 0, End: int64(len(data)) - 1, Downloaded: 1024}},
+	}
+	mb, _ := json.Marshal(&m)
+	if err := os.WriteFile(metaPath(dst), mb, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	updates := make(chan TaskInfo, 256)
+	e := newTestEngine(updates)
+	defer e.Shutdown()
+	if _, err := e.Add(AddOptions{ID: "t1", URL: srv.URL, SavePath: dst, Connections: 4, AutoStart: true}); err != nil {
+		t.Fatal(err)
+	}
+	info := waitForStatus(t, updates, StatusCompleted, StatusError)
+	if info.Status != StatusCompleted {
+		t.Fatalf("status=%s err=%s", info.Status, info.Error)
+	}
+	assertFileEquals(t, dst, data)
+}
+
+func TestChunkRetryCompletesAfterTransientFailure(t *testing.T) {
+	data := makeData(20 << 20)
+	var failed atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Accept-Ranges", "bytes")
+		if strings.HasPrefix(r.Header.Get("Range"), "bytes=1048576-") && failed.CompareAndSwap(false, true) {
+			w.Header().Set("Content-Length", "128")
+			w.Header().Set("Content-Range", "bytes 1048576-2097151/"+itoa(len(data)))
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = w.Write(data[1048576 : 1048576+128])
+			return
+		}
+		http.ServeContent(w, r, "data.bin", time.Now(), newTestReadSeeker(data))
+	}))
+	defer srv.Close()
+
+	updates := make(chan TaskInfo, 512)
+	e := newTestEngine(updates)
+	defer e.Shutdown()
+	dst := filepath.Join(t.TempDir(), "out.bin")
+	if _, err := e.Add(AddOptions{ID: "t1", URL: srv.URL, SavePath: dst, Connections: 4, AutoStart: true}); err != nil {
+		t.Fatal(err)
+	}
+	info := waitForStatus(t, updates, StatusCompleted, StatusError)
+	if info.Status != StatusCompleted {
+		t.Fatalf("status=%s err=%s", info.Status, info.Error)
+	}
+	if !failed.Load() {
+		t.Fatalf("transient failure was not exercised")
+	}
+	assertFileEquals(t, dst, data)
+}
+
+func TestSpeedLimitThrottlesDownload(t *testing.T) {
+	data := makeData(512 * 1024)
+	srv := rangeServer(t, data, true, 0)
+	defer srv.Close()
+
+	updates := make(chan TaskInfo, 512)
+	e := NewEngine(Config{
+		MaxConcurrent:  1,
+		MaxConnections: 1,
+		SpeedLimit:     256 * 1024,
+		ClientFactory:  func(proxy.Settings) *http.Client { return &http.Client{Timeout: 30 * time.Second} },
+		OnUpdate: func(info TaskInfo) {
+			select {
+			case updates <- info:
+			default:
+			}
+		},
+	})
+	defer e.Shutdown()
+
+	dst := filepath.Join(t.TempDir(), "limited.bin")
+	start := time.Now()
+	if _, err := e.Add(AddOptions{ID: "t1", URL: srv.URL, SavePath: dst, Connections: 1, AutoStart: true}); err != nil {
+		t.Fatal(err)
+	}
+	info := waitForStatus(t, updates, StatusCompleted, StatusError)
+	elapsed := time.Since(start)
+	if info.Status != StatusCompleted {
+		t.Fatalf("status=%s err=%s", info.Status, info.Error)
+	}
+	if elapsed < 1200*time.Millisecond {
+		t.Fatalf("speed limit did not throttle enough: elapsed=%s", elapsed)
 	}
 	assertFileEquals(t, dst, data)
 }

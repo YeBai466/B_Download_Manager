@@ -44,7 +44,7 @@ const MainWindowName = "main"
 const AddWindowName = "add"
 
 // Version is the application version reported to the browser extension.
-const Version = "1.1.0"
+const Version = "1.1.1"
 
 // StoreExtensionID is the published Chrome Web Store extension ID. Because the
 // extension is store-hosted, policy force-install works on consumer machines
@@ -92,11 +92,13 @@ func New(dbPath string, extFiles fs.FS) (*DownloadService, error) {
 	s := &DownloadService{store: st, settings: settings, extFiles: extFiles, keyDir: filepath.Dir(dbPath)}
 
 	s.engine = downloader.NewEngine(downloader.Config{
-		MaxConcurrent: settings.MaxConcurrent,
-		ClientFactory: s.newClientForProxy,
-		OnUpdate:      s.onTaskUpdate,
-		OnPersist:     s.onTaskPersist,
-		OnRemoved:     s.onTaskRemoved,
+		MaxConcurrent:  settings.MaxConcurrent,
+		MaxConnections: settings.MaxConcurrent * settings.Connections,
+		SpeedLimit:     settings.SpeedLimit,
+		ClientFactory:  s.newClientForProxy,
+		OnUpdate:       s.onTaskUpdate,
+		OnPersist:      s.onTaskPersist,
+		OnRemoved:      s.onTaskRemoved,
 	})
 	s.takeover = takeover.New(Version, s.onTakeover)
 	return s, nil
@@ -415,6 +417,11 @@ func (s *DownloadService) SaveSettings(cfg config.Settings) (config.Settings, er
 	s.mu.Lock()
 	s.settings = cfg
 	s.mu.Unlock()
+	s.engine.UpdateRuntime(downloader.RuntimeConfig{
+		MaxConcurrent:  cfg.MaxConcurrent,
+		MaxConnections: cfg.MaxConcurrent * cfg.Connections,
+		SpeedLimit:     cfg.SpeedLimit,
+	})
 	s.invalidateClient() // proxy may have changed; rebuild the pooled client
 
 	if cfg.TakeoverEnabled {
@@ -450,6 +457,11 @@ func (s *DownloadService) saveProxySettings(p proxy.Settings) error {
 	s.mu.Lock()
 	s.settings = cfg
 	s.mu.Unlock()
+	s.engine.UpdateRuntime(downloader.RuntimeConfig{
+		MaxConcurrent:  cfg.MaxConcurrent,
+		MaxConnections: cfg.MaxConcurrent * cfg.Connections,
+		SpeedLimit:     cfg.SpeedLimit,
+	})
 	s.invalidateClient()
 	return nil
 }

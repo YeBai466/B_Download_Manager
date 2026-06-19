@@ -37,6 +37,7 @@ func New(p proxy.Settings) (*http.Client, error) {
 		TLSHandshakeTimeout:   15 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 		ResponseHeaderTimeout: 30 * time.Second,
+		DisableCompression:    true,
 		// Larger socket buffers cut syscall overhead and improve throughput on
 		// high bandwidth-delay-product links.
 		WriteBufferSize: 64 * 1024,
