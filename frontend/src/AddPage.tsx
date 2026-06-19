@@ -187,6 +187,17 @@ function ProgressView({ task: t, onClose }: { task: TaskInfo; onClose: () => voi
   const active = t.status === "downloading" || t.status === "connecting";
   const done = t.status === "completed";
   const pct = t.progress >= 0 ? Math.round(t.progress * 100) : -1;
+  // Show placeholder thread rows while connecting (before segments are planned)
+  // so the multi-thread view appears instantly instead of "（0）".
+  const segs =
+    t.segments && t.segments.length > 0
+      ? t.segments
+      : Array.from({ length: Math.max(1, t.connections) }, (_, i) => ({
+          index: i,
+          start: 0,
+          end: -1,
+          downloaded: 0,
+        }));
 
   return (
     <div className="addwin">
@@ -208,10 +219,10 @@ function ProgressView({ task: t, onClose }: { task: TaskInfo; onClose: () => voi
         </div>
 
         <div style={{ marginTop: 14, fontSize: 12, color: "#44505f", fontWeight: 500 }}>
-          多线程连接（{t.segments?.length ?? 0}）
+          多线程连接（{segs.length}）
         </div>
         <div className="seg-list">
-          {(t.segments ?? []).map((s) => {
+          {segs.map((s) => {
             const total = s.end - s.start + 1;
             const segPct = total > 0 ? Math.round((s.downloaded / total) * 100) : 0;
             const segActive = active && segPct < 100;

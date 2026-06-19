@@ -233,7 +233,7 @@ export default function App() {
             <div className="titlebar">关于</div>
             <div className="content" style={{ textAlign: "center", lineHeight: 1.8 }}>
               <div style={{ fontSize: 16, fontWeight: 600 }}>B Download Manager</div>
-              <div>版本 1.0.0</div>
+              <div>版本 1.0.1</div>
               <div style={{ color: "var(--muted)", fontSize: 12 }}>Go + React (Wails v3) · 仿 IDM 多线程下载器</div>
             </div>
             <div className="actions">

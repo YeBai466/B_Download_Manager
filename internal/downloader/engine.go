@@ -437,13 +437,22 @@ func (e *Engine) transfer(ctx context.Context, client *http.Client, t *Task, w *
 	return nil
 }
 
-// reportProgress periodically computes speed and emits throttled updates.
+// reportProgress periodically computes speed and emits throttled updates. It
+// emits one update immediately so the UI (total bar, per-thread bars and speed)
+// comes alive the instant the transfer starts instead of after the first tick.
 func (e *Engine) reportProgress(t *Task, progress *int64, stop <-chan struct{}) {
-	ticker := time.NewTicker(400 * time.Millisecond)
+	const interval = 250 * time.Millisecond
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	var lastBytes int64
 	lastTime := time.Now()
-	const alpha = 0.4
+	// A lighter EMA (higher alpha) so the displayed speed converges to the real
+	// rate in ~1s instead of feeling like it slowly creeps up over many seconds.
+	const alpha = 0.6
+
+	t.recalcDownloaded()
+	e.cfg.OnUpdate(t.Snapshot()) // immediate first paint
+
 	for {
 		select {
 		case <-stop:

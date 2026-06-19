@@ -11,6 +11,17 @@ interface Props {
 export default function ProgressDialog({ task: t, onResume, onPause, onClose }: Props) {
   const active = t.status === "downloading" || t.status === "connecting";
   const pct = t.progress >= 0 ? Math.round(t.progress * 100) : -1;
+  // While connecting, segments aren't planned yet — show placeholder rows for
+  // the intended connection count so the multi-thread view is alive immediately.
+  const segs =
+    t.segments && t.segments.length > 0
+      ? t.segments
+      : Array.from({ length: Math.max(1, t.connections) }, (_, i) => ({
+          index: i,
+          start: 0,
+          end: -1,
+          downloaded: 0,
+        }));
 
   return (
     <div className="overlay" onMouseDown={onClose}>
@@ -35,10 +46,10 @@ export default function ProgressDialog({ task: t, onResume, onPause, onClose }: 
           </div>
 
           <div style={{ marginTop: 16, fontSize: 12, color: "#44505f", fontWeight: 500 }}>
-            连接分段（{t.segments?.length ?? 0}）
+            连接分段（{segs.length}）
           </div>
           <div className="seg-list">
-            {(t.segments ?? []).map((s) => {
+            {segs.map((s) => {
               const total = s.end - s.start + 1;
               const segPct = total > 0 ? Math.round((s.downloaded / total) * 100) : 0;
               return (

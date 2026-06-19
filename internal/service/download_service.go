@@ -43,7 +43,7 @@ const MainWindowName = "main"
 const AddWindowName = "add"
 
 // Version is the application version reported to the browser extension.
-const Version = "1.0.0"
+const Version = "1.0.1"
 
 // StoreExtensionID is the published Chrome Web Store extension ID. Because the
 // extension is store-hosted, policy force-install works on consumer machines
@@ -63,6 +63,9 @@ type DownloadService struct {
 	mu         sync.RWMutex
 	settings   config.Settings
 	pendingAdd AddPrefill
+
+	clientMu sync.Mutex
+	client   *http.Client // cached, proxy-aware client; rebuilt when proxy changes
 }
 
 // AddPrefill is the data shown in the separate add-download window.
@@ -130,7 +133,17 @@ func (s *DownloadService) ServiceShutdown() error {
 
 // --- Engine callbacks ---
 
+// newClient returns a shared, proxy-aware HTTP client. The client (and its
+// connection pool) is cached and reused across tasks so segment workers can
+// reuse keep-alive connections instead of opening fresh TCP+TLS connections
+// every time — which is a large part of the "slow to start" delay. The cache is
+// invalidated by invalidateClient when proxy settings change.
 func (s *DownloadService) newClient() *http.Client {
+	s.clientMu.Lock()
+	defer s.clientMu.Unlock()
+	if s.client != nil {
+		return s.client
+	}
 	s.mu.RLock()
 	p := s.settings.Proxy
 	s.mu.RUnlock()
@@ -138,7 +151,20 @@ func (s *DownloadService) newClient() *http.Client {
 	if err != nil {
 		return &http.Client{}
 	}
+	s.client = c
 	return c
+}
+
+// invalidateClient drops the cached client so the next download rebuilds it with
+// fresh proxy settings. Idle connections on the old client are closed.
+func (s *DownloadService) invalidateClient() {
+	s.clientMu.Lock()
+	old := s.client
+	s.client = nil
+	s.clientMu.Unlock()
+	if old != nil {
+		old.CloseIdleConnections()
+	}
 }
 
 func (s *DownloadService) onTaskUpdate(info downloader.TaskInfo) {
@@ -333,6 +359,7 @@ func (s *DownloadService) SaveSettings(cfg config.Settings) (config.Settings, er
 	s.mu.Lock()
 	s.settings = cfg
 	s.mu.Unlock()
+	s.invalidateClient() // proxy may have changed; rebuild the pooled client
 
 	if cfg.TakeoverEnabled {
 		_ = s.takeover.Start(cfg.TakeoverPort)
