@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/yebai/b-download-manager/internal/proxy"
+	"github.com/yebai/better-download-manager/internal/proxy"
 )
 
 // Status represents the lifecycle state of a download task. The values mirror

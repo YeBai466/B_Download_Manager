@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yebai/b-download-manager/internal/proxy"
+	"github.com/yebai/better-download-manager/internal/proxy"
 )
 
 // makeData returns deterministic pseudo-random bytes of length n.

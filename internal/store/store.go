@@ -9,8 +9,8 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/yebai/b-download-manager/internal/config"
-	"github.com/yebai/b-download-manager/internal/downloader"
+	"github.com/yebai/better-download-manager/internal/config"
+	"github.com/yebai/better-download-manager/internal/downloader"
 )
 
 // Store is the persistence layer. It is safe for concurrent use (database/sql

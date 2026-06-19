@@ -3,7 +3,7 @@ package downloader
 import (
 	"time"
 
-	"github.com/yebai/b-download-manager/internal/proxy"
+	"github.com/yebai/better-download-manager/internal/proxy"
 )
 
 // Record is the full persistable state of a task, including the fields omitted

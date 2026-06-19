@@ -18,15 +18,15 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
-	cat "github.com/yebai/b-download-manager/internal/category"
-	"github.com/yebai/b-download-manager/internal/config"
-	"github.com/yebai/b-download-manager/internal/downloader"
-	"github.com/yebai/b-download-manager/internal/httpclient"
-	"github.com/yebai/b-download-manager/internal/policy"
-	"github.com/yebai/b-download-manager/internal/proxy"
-	"github.com/yebai/b-download-manager/internal/store"
-	"github.com/yebai/b-download-manager/internal/takeover"
-	"github.com/yebai/b-download-manager/internal/updates"
+	cat "github.com/yebai/better-download-manager/internal/category"
+	"github.com/yebai/better-download-manager/internal/config"
+	"github.com/yebai/better-download-manager/internal/downloader"
+	"github.com/yebai/better-download-manager/internal/httpclient"
+	"github.com/yebai/better-download-manager/internal/policy"
+	"github.com/yebai/better-download-manager/internal/proxy"
+	"github.com/yebai/better-download-manager/internal/store"
+	"github.com/yebai/better-download-manager/internal/takeover"
+	"github.com/yebai/better-download-manager/internal/updates"
 )
 
 // Frontend event names.

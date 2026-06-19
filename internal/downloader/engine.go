@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/yebai/b-download-manager/internal/proxy"
+	"github.com/yebai/better-download-manager/internal/proxy"
 )
 
 // DefaultConnections is the number of parallel connections used per task when

@@ -6,9 +6,9 @@
         <key>CFBundleName</key>
             <string>Better Download Manager</string>
         <key>CFBundleExecutable</key>
-            <string>b_download_manager.exe</string>
+            <string>better-download-manager.exe</string>
         <key>CFBundleIdentifier</key>
-            <string>com.yebai.bdownloadmanager</string>
+            <string>com.yebai.betterdownloadmanager</string>
         <key>CFBundleVersion</key>
             <string>0.1.0</string>
         <key>CFBundleGetInfoString</key>

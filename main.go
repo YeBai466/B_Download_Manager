@@ -10,7 +10,7 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 
-	"github.com/yebai/b-download-manager/internal/service"
+	"github.com/yebai/better-download-manager/internal/service"
 )
 
 //go:embed all:frontend/dist
@@ -53,7 +53,7 @@ func main() {
 		// Only one instance may run: it owns the takeover port and tray. A second
 		// launch focuses the existing window and exits instead of conflicting.
 		SingleInstance: &application.SingleInstanceOptions{
-			UniqueID: "com.yebai.bdownloadmanager",
+			UniqueID: "com.yebai.betterdownloadmanager",
 			OnSecondInstanceLaunch: func(application.SecondInstanceData) {
 				if a := application.Get(); a != nil {
 					if w, ok := a.Window.Get(service.MainWindowName); ok {
@@ -140,7 +140,7 @@ func databasePath() string {
 	if err != nil {
 		dir = "."
 	}
-	appDir := filepath.Join(dir, "BDownloadManager")
+	appDir := filepath.Join(dir, "BetterDownloadManager")
 	_ = os.MkdirAll(appDir, 0o755)
 	return filepath.Join(appDir, "bdm.db")
 }

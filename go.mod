@@ -1,4 +1,4 @@
-module github.com/yebai/b-download-manager
+module github.com/yebai/better-download-manager
 
 go 1.25.0
 

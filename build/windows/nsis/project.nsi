@@ -19,9 +19,9 @@ Unicode true
 ####
 ## The following information is taken from the wails_tools.nsh file, but they can be overwritten here.
 ####
-## !define INFO_PROJECTNAME    "my-project" # Default "B_Download_Manager"
+## !define INFO_PROJECTNAME    "my-project" # Default "Better-Download-Manager"
 ## !define INFO_COMPANYNAME    "My Company" # Default "yebai"
-## !define INFO_PRODUCTNAME    "My Product Name" # Default "B Download Manager"
+## !define INFO_PRODUCTNAME    "My Product Name" # Default "Better Download Manager"
 ## !define INFO_PRODUCTVERSION "1.0.0"     # Default "0.1.0"
 ## !define INFO_COPYRIGHT      "(c) Now, My Company" # Default "(c) 2026, My Company"
 ###
@@ -124,7 +124,7 @@ Section
     !insertmacro wails.setShellContext
 
     # Close the app if it is currently running, so an upgrade can replace files.
-    # User data/settings live in %AppData%\BDownloadManager and are NOT touched,
+    # User data/settings live in %AppData%\BetterDownloadManager and are NOT touched,
     # so this is a clean in-place update.
     nsExec::Exec 'taskkill /F /IM "${PRODUCT_EXECUTABLE}"'
     Sleep 800
@@ -158,7 +158,7 @@ Section "uninstall"
     Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
     Delete "$DESKTOP\${INFO_PRODUCTNAME}.lnk"
 
-    # Note: user downloads database & settings in %AppData%\BDownloadManager are
+    # Note: user downloads database & settings in %AppData%\BetterDownloadManager are
     # intentionally left in place so reinstalling keeps your data. Delete that
     # folder manually for a full wipe.
 

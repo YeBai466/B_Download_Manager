@@ -8,7 +8,7 @@
   IgnorableNamespaces="uap3">
   
   <Identity 
-    Name="com.yebai.bdownloadmanager"
+    Name="com.yebai.betterdownloadmanager"
     Publisher="CN=yebai"
     Version="0.1.0.0" 
     ProcessorArchitecture="x64" />
@@ -29,7 +29,7 @@
   </Resources>
   
   <Applications>
-    <Application Id="com.yebai.bdownloadmanager" Executable="b_download_manager.exe" EntryPoint="Windows.FullTrustApplication">
+    <Application Id="com.yebai.betterdownloadmanager" Executable="better-download-manager.exe" EntryPoint="Windows.FullTrustApplication">
       <uap:VisualElements
         DisplayName="Better Download Manager"
         Description="仿 IDM 多线程下载器"
@@ -41,7 +41,7 @@
       </uap:VisualElements>
       
       <Extensions>
-        <desktop:Extension Category="windows.fullTrustProcess" Executable="b_download_manager.exe" />
+        <desktop:Extension Category="windows.fullTrustProcess" Executable="better-download-manager.exe" />
         
         
       </Extensions>

@@ -51,7 +51,7 @@ func Check(ctx context.Context, current string) (Result, error) {
 		return res, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "BDownloadManager-UpdateCheck")
+	req.Header.Set("User-Agent", "BetterDownloadManager-UpdateCheck")
 
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)

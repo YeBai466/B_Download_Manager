@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/yebai/b-download-manager/internal/proxy"
+	"github.com/yebai/better-download-manager/internal/proxy"
 )
 
 // TakeoverAction decides what happens when the browser extension hands a URL to

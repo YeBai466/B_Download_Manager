@@ -5,7 +5,7 @@
 !include "FileFunc.nsh"
 
 !ifndef INFO_PROJECTNAME
-    !define INFO_PROJECTNAME "B_Download_Manager"
+    !define INFO_PROJECTNAME "Better-Download-Manager"
 !endif
 !ifndef INFO_COMPANYNAME
     !define INFO_COMPANYNAME "yebai"

@@ -1,9 +1,9 @@
 // Thin wrappers over the generated Wails bindings and event runtime.
 import { Events } from "@wailsio/runtime";
-import { DownloadService } from "../bindings/github.com/yebai/b-download-manager/internal/service/index.js";
-import type { AddRequest, ExtStatus, AddPrefill } from "../bindings/github.com/yebai/b-download-manager/internal/service/models.js";
-import type { TaskInfo } from "../bindings/github.com/yebai/b-download-manager/internal/downloader/models.js";
-import type { Settings } from "../bindings/github.com/yebai/b-download-manager/internal/config/models.js";
+import { DownloadService } from "../bindings/github.com/yebai/better-download-manager/internal/service/index.js";
+import type { AddRequest, ExtStatus, AddPrefill } from "../bindings/github.com/yebai/better-download-manager/internal/service/models.js";
+import type { TaskInfo } from "../bindings/github.com/yebai/better-download-manager/internal/downloader/models.js";
+import type { Settings } from "../bindings/github.com/yebai/better-download-manager/internal/config/models.js";
 
 export type { TaskInfo, Settings, AddRequest, ExtStatus, AddPrefill };
 type ProxySettings = Settings["proxy"];

@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/yebai/b-download-manager/internal/proxy"
+	"github.com/yebai/better-download-manager/internal/proxy"
 )
 
 // New returns an http.Client configured with the given proxy settings. The

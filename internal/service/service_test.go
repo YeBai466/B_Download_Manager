@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yebai/b-download-manager/internal/config"
-	"github.com/yebai/b-download-manager/internal/downloader"
-	"github.com/yebai/b-download-manager/internal/proxy"
+	"github.com/yebai/better-download-manager/internal/config"
+	"github.com/yebai/better-download-manager/internal/downloader"
+	"github.com/yebai/better-download-manager/internal/proxy"
 )
 
 func TestServiceAddAndDownload(t *testing.T) {

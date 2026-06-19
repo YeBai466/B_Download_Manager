@@ -165,4 +165,4 @@ func applyHeaders(req *http.Request, headers map[string]string) {
 	}
 }
 
-const defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) BDownloadManager/1.0"
+const defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) BetterDownloadManager/1.0"

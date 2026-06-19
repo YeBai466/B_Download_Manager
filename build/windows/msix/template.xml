@@ -8,7 +8,7 @@
         AllowPromptForPassword="false">
     </Settings>
     <Installer
-        Path="b_download_manager.exe"
+        Path="better-download-manager.exe"
         Arguments=""
         InstallLocation="C:\Program Files\yebai\Better Download Manager">
     </Installer>
@@ -25,10 +25,10 @@
         </Capabilities>
         <Applications>
             <Application
-                Id="com.yebai.bdownloadmanager"
+                Id="com.yebai.betterdownloadmanager"
                 Description="仿 IDM 多线程下载器"
                 DisplayName="Better Download Manager"
-                ExecutableName="b_download_manager.exe"
+                ExecutableName="better-download-manager.exe"
                 EntryPoint="Windows.FullTrustApplication">
                 
             </Application>
@@ -47,7 +47,7 @@
             <Logo>Assets\AppIcon.png</Logo>
         </Properties>
     </PackageInformation>
-    <SaveLocation PackagePath="b_download_manager.msix" />
+    <SaveLocation PackagePath="better-download-manager.msix" />
     <PackageIntegrity>
         <CertificatePath></CertificatePath>
     </PackageIntegrity>

@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>b_download_manager.exe</string>
+    <string>better-download-manager.exe</string>
     <key>CFBundleIdentifier</key>
-    <string>com.yebai.bdownloadmanager.dev</string>
+    <string>com.yebai.betterdownloadmanager.dev</string>
     <key>CFBundleName</key>
     <string>Better Download Manager (Dev)</string>
     <key>CFBundleDisplayName</key>
