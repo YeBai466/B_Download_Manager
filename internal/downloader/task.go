@@ -4,6 +4,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/yebai/b-download-manager/internal/proxy"
 )
 
 // Status represents the lifecycle state of a download task. The values mirror
@@ -62,6 +64,7 @@ type Task struct {
 	Resumable   bool  // server advertises Accept-Ranges: bytes
 	Connections int   // desired number of parallel connections
 	Headers     map[string]string
+	Proxy       proxy.Settings
 	MIME        string
 
 	Status     Status

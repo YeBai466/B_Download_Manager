@@ -6,6 +6,7 @@ import type { TaskInfo } from "../bindings/github.com/yebai/b-download-manager/i
 import type { Settings } from "../bindings/github.com/yebai/b-download-manager/internal/config/models.js";
 
 export type { TaskInfo, Settings, AddRequest, ExtStatus, AddPrefill };
+type ProxySettings = Settings["proxy"];
 
 export const EVT_TASK_UPDATE = "task:update";
 export const EVT_TASK_REMOVED = "task:removed";
@@ -14,7 +15,8 @@ export const EVT_TAKEOVER = "takeover:request";
 export const api = {
   listTasks: () => DownloadService.ListTasks(),
   addURL: (req: AddRequest) => DownloadService.AddURL(req),
-  probeURL: (url: string) => DownloadService.ProbeURL(url),
+  probeURL: (req: { url: string; headers?: Record<string, string>; proxy?: ProxySettings }) =>
+    DownloadService.ProbeURL({ url: req.url, headers: req.headers ?? {}, proxy: req.proxy ?? ({ mode: "" } as ProxySettings) }),
   startTask: (id: string) => DownloadService.StartTask(id),
   pauseTask: (id: string) => DownloadService.PauseTask(id),
   removeTask: (id: string, deleteFile: boolean) => DownloadService.RemoveTask(id, deleteFile),
@@ -29,6 +31,7 @@ export const api = {
   installedBrowsers: () => DownloadService.InstalledBrowsers(),
   prepareManualInstall: () => DownloadService.PrepareManualInstall(),
   extStatus: () => DownloadService.BrowserExtensionStatus(),
+  browserExtensionConfigured: () => DownloadService.BrowserExtensionConfigured(),
   installExt: (browsers: string[]) => DownloadService.InstallBrowserExtension(browsers),
   uninstallExt: (browsers: string[]) => DownloadService.UninstallBrowserExtension(browsers),
   resolveSaveDir: (category: string) => DownloadService.ResolveSaveDir(category),

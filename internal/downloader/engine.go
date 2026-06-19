@@ -7,6 +7,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/yebai/b-download-manager/internal/proxy"
 )
 
 // DefaultConnections is the number of parallel connections used per task when
@@ -16,11 +18,11 @@ const DefaultConnections = 8
 // Config configures an Engine. The callbacks let the host (Wails service) react
 // to task updates without the engine depending on the UI or storage layers.
 type Config struct {
-	MaxConcurrent int                 // max simultaneously downloading tasks
-	ClientFactory func() *http.Client // builds the HTTP client (proxy-aware)
-	OnUpdate      func(info TaskInfo) // throttled progress + status changes
-	OnPersist     func(rec Record)    // durable state changes (status only)
-	OnRemoved     func(id string)     // task removed
+	MaxConcurrent int                               // max simultaneously downloading tasks
+	ClientFactory func(proxy.Settings) *http.Client // builds the HTTP client (proxy-aware)
+	OnUpdate      func(info TaskInfo)               // throttled progress + status changes
+	OnPersist     func(rec Record)                  // durable state changes (status only)
+	OnRemoved     func(id string)                   // task removed
 }
 
 // Engine manages the task queue, scheduling and lifecycle of downloads.
@@ -39,6 +41,7 @@ type managed struct {
 	cancel  context.CancelFunc
 	done    chan struct{}
 	running bool
+	removed bool
 }
 
 // NewEngine creates an engine with sensible defaults applied to cfg.
@@ -47,7 +50,7 @@ func NewEngine(cfg Config) *Engine {
 		cfg.MaxConcurrent = 5
 	}
 	if cfg.ClientFactory == nil {
-		cfg.ClientFactory = func() *http.Client { return &http.Client{} }
+		cfg.ClientFactory = func(proxy.Settings) *http.Client { return &http.Client{} }
 	}
 	if cfg.OnUpdate == nil {
 		cfg.OnUpdate = func(TaskInfo) {}
@@ -73,6 +76,7 @@ type AddOptions struct {
 	Category    string
 	Connections int
 	Headers     map[string]string
+	Proxy       proxy.Settings
 	AutoStart   bool
 }
 
@@ -91,6 +95,7 @@ func (e *Engine) Add(opts AddOptions) (TaskInfo, error) {
 		TotalSize:   -1,
 		Connections: conns,
 		Headers:     opts.Headers,
+		Proxy:       opts.Proxy,
 		Status:      StatusQueued,
 		CreatedAt:   time.Now(),
 	}
@@ -140,7 +145,7 @@ func (e *Engine) Start(id string) error {
 		return nil
 	}
 	m.task.setStatus(StatusQueued, "")
-	e.emit(m.task)
+	e.emitManaged(m)
 	e.schedule()
 	return nil
 }
@@ -170,10 +175,10 @@ func (e *Engine) Pause(id string) error {
 		m.task.Speed = 0
 		m.task.mu.Unlock()
 		m.task.setStatus(StatusPaused, "")
-		e.emit(m.task)
+		e.emitManaged(m)
 	case StatusQueued:
 		m.task.setStatus(StatusPaused, "")
-		e.emit(m.task)
+		e.emitManaged(m)
 	}
 	return nil
 }
@@ -188,6 +193,7 @@ func (e *Engine) Remove(id string, deleteFile bool) error {
 		e.mu.Unlock()
 		return ErrNotFound
 	}
+	m.removed = true
 	delete(e.tasks, id)
 	for i, oid := range e.order {
 		if oid == id {
@@ -210,6 +216,7 @@ func (e *Engine) Remove(id string, deleteFile bool) error {
 			<-done // let the worker finish writing before we touch the files
 		}
 		if deleteFile {
+			removeFinal(m.task.SavePath)
 			removeMeta(m.task.SavePath)
 			removePartial(m.task.SavePath)
 		}
@@ -307,9 +314,9 @@ func (e *Engine) run(ctx context.Context, m *managed) {
 		e.schedule()
 	}()
 
-	client := e.cfg.ClientFactory()
+	client := e.cfg.ClientFactory(t.Proxy)
 	t.setStatus(StatusConnecting, "")
-	e.emit(t)
+	e.emitManaged(m)
 
 	if err := e.prepare(ctx, client, t); err != nil {
 		e.fail(t, ctx, err)
@@ -323,7 +330,7 @@ func (e *Engine) run(ctx context.Context, m *managed) {
 	}
 
 	t.setStatus(StatusDownloading, "")
-	e.emit(t)
+	e.emitManaged(m)
 
 	if err := e.transfer(ctx, client, t, w); err != nil {
 		w.Close()
@@ -339,7 +346,7 @@ func (e *Engine) run(ctx context.Context, m *managed) {
 	removeMeta(t.SavePath)
 	t.recalcDownloaded()
 	t.setStatus(StatusCompleted, "")
-	e.emit(t)
+	e.emitManaged(m)
 }
 
 // prepare probes the URL (if needed) and (re)builds the segment plan, loading
@@ -451,7 +458,9 @@ func (e *Engine) reportProgress(t *Task, progress *int64, stop <-chan struct{}) 
 	const alpha = 0.6
 
 	t.recalcDownloaded()
-	e.cfg.OnUpdate(t.Snapshot()) // immediate first paint
+	if e.isActive(t.ID) {
+		e.cfg.OnUpdate(t.Snapshot()) // immediate first paint
+	}
 
 	for {
 		select {
@@ -471,7 +480,9 @@ func (e *Engine) reportProgress(t *Task, progress *int64, stop <-chan struct{}) 
 			t.Speed = int64(alpha*instant + (1-alpha)*float64(t.Speed))
 			t.mu.Unlock()
 			t.recalcDownloaded()
-			e.cfg.OnUpdate(t.Snapshot())
+			if e.isActive(t.ID) {
+				e.cfg.OnUpdate(t.Snapshot())
+			}
 		}
 	}
 }
@@ -487,13 +498,37 @@ func (e *Engine) fail(t *Task, ctx context.Context, err error) {
 	} else {
 		t.setStatus(StatusError, err.Error())
 	}
-	e.emit(t)
+	e.emitIfActive(t)
 }
 
 // emit pushes both a UI update and a durable persist for a task.
 func (e *Engine) emit(t *Task) {
 	e.cfg.OnUpdate(t.Snapshot())
 	e.cfg.OnPersist(t.Record())
+}
+
+func (e *Engine) emitManaged(m *managed) {
+	e.mu.Lock()
+	removed := m.removed
+	e.mu.Unlock()
+	if removed {
+		return
+	}
+	e.emit(m.task)
+}
+
+func (e *Engine) emitIfActive(t *Task) {
+	if !e.isActive(t.ID) {
+		return
+	}
+	e.emit(t)
+}
+
+func (e *Engine) isActive(id string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	m := e.tasks[id]
+	return m != nil && !m.removed
 }
 
 func (t *Task) headersCopy() map[string]string {

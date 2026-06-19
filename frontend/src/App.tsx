@@ -44,10 +44,13 @@ export default function App() {
   useEffect(() => {
     reload();
     api.categories().then((c) => setCategories(c ?? []));
-    api.getSettings().then((cfg) => {
+    api.getSettings().then(async (cfg) => {
       setSettings(cfg);
       // On startup, offer the one-time manual extension install (unless ignored).
-      if (cfg.takeoverEnabled && !cfg.extPromptIgnored) setExtPrompt(true);
+      if (cfg.takeoverEnabled && !cfg.extPromptIgnored) {
+        const configured = await api.browserExtensionConfigured().catch(() => false);
+        if (!configured) setExtPrompt(true);
+      }
       // Auto-check for updates (silent unless a newer version exists).
       if (cfg.autoCheckUpdate) {
         api.checkForUpdates()
@@ -97,7 +100,7 @@ export default function App() {
   const hasCompleted = allTasks.some((t) => t.status === "completed");
 
   const canResume = !!selected && ["paused", "error", "queued"].includes(selected.status);
-  const canStop = !!selected && ["downloading", "connecting"].includes(selected.status);
+  const canStop = !!selected && ["downloading", "connecting", "queued"].includes(selected.status);
 
   const openAdd = async () => {
     let url = "";
@@ -233,7 +236,7 @@ export default function App() {
             <div className="titlebar">关于</div>
             <div className="content" style={{ textAlign: "center", lineHeight: 1.8 }}>
               <div style={{ fontSize: 16, fontWeight: 600 }}>B Download Manager</div>
-              <div>版本 1.0.1</div>
+              <div>版本 1.0.2</div>
               <div style={{ color: "var(--muted)", fontSize: 12 }}>Go + React (Wails v3) · 仿 IDM 多线程下载器</div>
             </div>
             <div className="actions">

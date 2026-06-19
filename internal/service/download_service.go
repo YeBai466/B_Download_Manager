@@ -23,6 +23,7 @@ import (
 	"github.com/yebai/b-download-manager/internal/downloader"
 	"github.com/yebai/b-download-manager/internal/httpclient"
 	"github.com/yebai/b-download-manager/internal/policy"
+	"github.com/yebai/b-download-manager/internal/proxy"
 	"github.com/yebai/b-download-manager/internal/store"
 	"github.com/yebai/b-download-manager/internal/takeover"
 	"github.com/yebai/b-download-manager/internal/updates"
@@ -43,7 +44,7 @@ const MainWindowName = "main"
 const AddWindowName = "add"
 
 // Version is the application version reported to the browser extension.
-const Version = "1.0.1"
+const Version = "1.0.2"
 
 // StoreExtensionID is the published Chrome Web Store extension ID. Because the
 // extension is store-hosted, policy force-install works on consumer machines
@@ -65,7 +66,7 @@ type DownloadService struct {
 	pendingAdd AddPrefill
 
 	clientMu sync.Mutex
-	client   *http.Client // cached, proxy-aware client; rebuilt when proxy changes
+	clients  map[proxy.Settings]*http.Client // cached, proxy-aware clients keyed by task proxy settings
 }
 
 // AddPrefill is the data shown in the separate add-download window.
@@ -92,7 +93,7 @@ func New(dbPath string, extFiles fs.FS) (*DownloadService, error) {
 
 	s.engine = downloader.NewEngine(downloader.Config{
 		MaxConcurrent: settings.MaxConcurrent,
-		ClientFactory: s.newClient,
+		ClientFactory: s.newClientForProxy,
 		OnUpdate:      s.onTaskUpdate,
 		OnPersist:     s.onTaskPersist,
 		OnRemoved:     s.onTaskRemoved,
@@ -139,19 +140,29 @@ func (s *DownloadService) ServiceShutdown() error {
 // every time — which is a large part of the "slow to start" delay. The cache is
 // invalidated by invalidateClient when proxy settings change.
 func (s *DownloadService) newClient() *http.Client {
-	s.clientMu.Lock()
-	defer s.clientMu.Unlock()
-	if s.client != nil {
-		return s.client
-	}
 	s.mu.RLock()
 	p := s.settings.Proxy
 	s.mu.RUnlock()
+	return s.newClientForProxy(p)
+}
+
+func (s *DownloadService) newClientForProxy(p proxy.Settings) *http.Client {
+	if p.Mode == "" {
+		p.Mode = proxy.ModeSystem
+	}
+	s.clientMu.Lock()
+	defer s.clientMu.Unlock()
+	if s.clients == nil {
+		s.clients = map[proxy.Settings]*http.Client{}
+	}
+	if c := s.clients[p]; c != nil {
+		return c
+	}
 	c, err := httpclient.New(p)
 	if err != nil {
 		return &http.Client{}
 	}
-	s.client = c
+	s.clients[p] = c
 	return c
 }
 
@@ -159,11 +170,13 @@ func (s *DownloadService) newClient() *http.Client {
 // fresh proxy settings. Idle connections on the old client are closed.
 func (s *DownloadService) invalidateClient() {
 	s.clientMu.Lock()
-	old := s.client
-	s.client = nil
+	old := s.clients
+	s.clients = nil
 	s.clientMu.Unlock()
-	if old != nil {
-		old.CloseIdleConnections()
+	for _, c := range old {
+		if c != nil {
+			c.CloseIdleConnections()
+		}
 	}
 }
 
@@ -190,13 +203,15 @@ func (s *DownloadService) onTaskRemoved(id string) {
 
 // AddRequest describes a download to add from the UI or the add dialog.
 type AddRequest struct {
-	URL         string            `json:"url"`
-	Filename    string            `json:"filename"`
-	Category    string            `json:"category"`
-	SaveDir     string            `json:"saveDir"`
-	Connections int               `json:"connections"`
-	Headers     map[string]string `json:"headers"`
-	AutoStart   bool              `json:"autoStart"`
+	URL           string            `json:"url"`
+	Filename      string            `json:"filename"`
+	Category      string            `json:"category"`
+	SaveDir       string            `json:"saveDir"`
+	Connections   int               `json:"connections"`
+	Headers       map[string]string `json:"headers"`
+	Proxy         proxy.Settings    `json:"proxy"`
+	RememberProxy bool              `json:"rememberProxy"`
+	AutoStart     bool              `json:"autoStart"`
 }
 
 // AddURL registers a new download and returns its task info.
@@ -224,6 +239,12 @@ func (s *DownloadService) AddURL(req AddRequest) (downloader.TaskInfo, error) {
 		conns = s.settings.Connections
 		s.mu.RUnlock()
 	}
+	taskProxy := s.normalizeTaskProxy(req.Proxy)
+	if req.RememberProxy {
+		if err := s.saveProxySettings(taskProxy); err != nil {
+			return downloader.TaskInfo{}, err
+		}
+	}
 
 	return s.engine.Add(downloader.AddOptions{
 		ID:          newID(),
@@ -233,6 +254,7 @@ func (s *DownloadService) AddURL(req AddRequest) (downloader.TaskInfo, error) {
 		Category:    category,
 		Connections: conns,
 		Headers:     req.Headers,
+		Proxy:       taskProxy,
 		AutoStart:   req.AutoStart,
 	})
 }
@@ -265,20 +287,32 @@ func (s *DownloadService) openAddWindow(p AddPrefill) {
 	}
 	if w, ok := app.Window.Get(AddWindowName); ok {
 		app.Event.Emit("add:reload", nil) // tell it to re-read the prefill
+		w.Restore()
 		w.Show()
+		w.SetAlwaysOnTop(true)
 		w.Focus()
+		go resetTopmost(w)
 		return
 	}
-	app.Window.NewWithOptions(application.WebviewWindowOptions{
+	w := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:             AddWindowName,
 		Title:            "添加下载",
 		Width:            560,
 		Height:           500,
 		MinWidth:         460,
 		MinHeight:        420,
+		AlwaysOnTop:      true,
 		BackgroundColour: application.NewRGB(245, 246, 248),
 		URL:              "/?view=add",
 	})
+	w.Show()
+	w.Focus()
+	go resetTopmost(w)
+}
+
+func resetTopmost(w application.Window) {
+	time.Sleep(1200 * time.Millisecond)
+	w.SetAlwaysOnTop(false)
 }
 
 // ListTasks returns all tasks in insertion order.
@@ -307,7 +341,7 @@ func (s *DownloadService) StartAll() {
 // PauseAll stops every active task.
 func (s *DownloadService) PauseAll() {
 	for _, t := range s.engine.List() {
-		if t.Status == downloader.StatusDownloading || t.Status == downloader.StatusConnecting {
+		if t.Status == downloader.StatusDownloading || t.Status == downloader.StatusConnecting || t.Status == downloader.StatusQueued {
 			_ = s.engine.Pause(t.ID)
 		}
 	}
@@ -322,11 +356,21 @@ type Preview struct {
 	Category  string `json:"category"`
 }
 
+type ProbeRequest struct {
+	URL     string            `json:"url"`
+	Headers map[string]string `json:"headers"`
+	Proxy   proxy.Settings    `json:"proxy"`
+}
+
 // ProbeURL fetches metadata for a URL so the add dialog can show file info.
-func (s *DownloadService) ProbeURL(url string) (Preview, error) {
+func (s *DownloadService) ProbeURL(req ProbeRequest) (Preview, error) {
+	url := strings.TrimSpace(req.URL)
+	if url == "" {
+		return Preview{}, fmt.Errorf("url is required")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	res, err := downloader.Probe(ctx, s.newClient(), url, nil)
+	res, err := downloader.Probe(ctx, s.newClientForProxy(s.normalizeTaskProxy(req.Proxy)), url, req.Headers)
 	if err != nil {
 		return Preview{}, err
 	}
@@ -368,6 +412,34 @@ func (s *DownloadService) SaveSettings(cfg config.Settings) (config.Settings, er
 	}
 	s.applyAutostart(cfg.AutoStart)
 	return cfg, nil
+}
+
+func (s *DownloadService) normalizeTaskProxy(p proxy.Settings) proxy.Settings {
+	if p.Mode == "" {
+		s.mu.RLock()
+		p = s.settings.Proxy
+		s.mu.RUnlock()
+	}
+	if p.Mode == "" {
+		p.Mode = proxy.ModeSystem
+	}
+	return p
+}
+
+func (s *DownloadService) saveProxySettings(p proxy.Settings) error {
+	s.mu.RLock()
+	cfg := s.settings
+	s.mu.RUnlock()
+	cfg.Proxy = p
+	cfg.Normalize()
+	if err := s.store.SaveSettings(cfg); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.settings = cfg
+	s.mu.Unlock()
+	s.invalidateClient()
+	return nil
 }
 
 // applyAutostart registers or removes the login autostart entry to match cfg.
@@ -441,6 +513,11 @@ func (s *DownloadService) BrowserExtensionStatus() ExtStatus {
 	return ExtStatus{ID: StoreExtensionID, Chrome: st.Chrome, Edge: st.Edge}
 }
 
+func (s *DownloadService) BrowserExtensionConfigured() bool {
+	st := policy.GetStatus(StoreExtensionID)
+	return st.Chrome || st.Edge
+}
+
 // InstallBrowserExtension force-installs the published Web Store extension into
 // the selected browsers (names like "Chrome"/"Edge"; empty = all installed) via
 // enterprise policy. Prompts for administrator elevation (UAC). Because the
@@ -457,6 +534,7 @@ func (s *DownloadService) InstallBrowserExtension(browsers []string) error {
 func (s *DownloadService) UninstallBrowserExtension(browsers []string) error {
 	return policy.Uninstall(StoreExtensionID, browsers)
 }
+
 type ManualInstallInfo struct {
 	Dir string `json:"dir"` // folder containing the unpacked extension
 }

@@ -1,6 +1,10 @@
 package downloader
 
-import "time"
+import (
+	"time"
+
+	"github.com/yebai/b-download-manager/internal/proxy"
+)
 
 // Record is the full persistable state of a task, including the fields omitted
 // from TaskInfo (headers) that are required to resume after a restart.
@@ -18,6 +22,7 @@ type Record struct {
 	Error       string            `json:"error"`
 	Downloaded  int64             `json:"downloaded"`
 	Headers     map[string]string `json:"headers"`
+	Proxy       proxy.Settings    `json:"proxy"`
 	Segments    []Segment         `json:"segments"`
 	CreatedAt   time.Time         `json:"createdAt"`
 	FinishedAt  time.Time         `json:"finishedAt"`
@@ -40,6 +45,7 @@ func (t *Task) Record() Record {
 		Status:      t.Status,
 		Error:       t.Error,
 		Downloaded:  t.Downloaded,
+		Proxy:       t.Proxy,
 		CreatedAt:   t.CreatedAt,
 		FinishedAt:  t.FinishedAt,
 	}
@@ -72,6 +78,7 @@ func TaskFromRecord(r Record) *Task {
 		Error:       r.Error,
 		Downloaded:  r.Downloaded,
 		Headers:     r.Headers,
+		Proxy:       r.Proxy,
 		CreatedAt:   r.CreatedAt,
 		FinishedAt:  r.FinishedAt,
 	}

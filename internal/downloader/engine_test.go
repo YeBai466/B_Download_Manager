@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/yebai/b-download-manager/internal/proxy"
 )
 
 // makeData returns deterministic pseudo-random bytes of length n.
@@ -124,7 +126,7 @@ func waitForStatus(t *testing.T, updates <-chan TaskInfo, want ...Status) TaskIn
 func newTestEngine(updates chan TaskInfo) *Engine {
 	return NewEngine(Config{
 		MaxConcurrent: 4,
-		ClientFactory: func() *http.Client { return &http.Client{Timeout: 30 * time.Second} },
+		ClientFactory: func(proxy.Settings) *http.Client { return &http.Client{Timeout: 30 * time.Second} },
 		OnUpdate: func(info TaskInfo) {
 			select {
 			case updates <- info:
@@ -289,4 +291,125 @@ func TestPauseResume(t *testing.T) {
 		t.Fatalf("status=%s err=%s", info.Status, info.Error)
 	}
 	assertFileEquals(t, dst, data)
+}
+
+func TestRemoveRunningDeletesFilesAndDoesNotReappear(t *testing.T) {
+	data := makeData(2 << 20)
+	srv := rangeServer(t, data, true, 20*time.Millisecond)
+	defer srv.Close()
+
+	updates := make(chan TaskInfo, 512)
+	removed := make(chan string, 1)
+	e := NewEngine(Config{
+		MaxConcurrent: 1,
+		ClientFactory: func(proxy.Settings) *http.Client { return &http.Client{Timeout: 30 * time.Second} },
+		OnUpdate: func(info TaskInfo) {
+			select {
+			case updates <- info:
+			default:
+			}
+		},
+		OnRemoved: func(id string) { removed <- id },
+	})
+	defer e.Shutdown()
+
+	dst := filepath.Join(t.TempDir(), "out.bin")
+	if _, err := e.Add(AddOptions{ID: "t1", URL: srv.URL, SavePath: dst, Connections: 4, AutoStart: true}); err != nil {
+		t.Fatal(err)
+	}
+	waitForStatus(t, updates, StatusDownloading)
+	if err := e.Remove("t1", true); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case id := <-removed:
+		if id != "t1" {
+			t.Fatalf("removed id=%s", id)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("remove callback not called")
+	}
+	time.Sleep(500 * time.Millisecond)
+	if got := e.List(); len(got) != 0 {
+		t.Fatalf("expected empty list, got %+v", got)
+	}
+	if _, err := os.Stat(dst); !os.IsNotExist(err) {
+		t.Fatalf("expected final file removed, err=%v", err)
+	}
+	if _, err := os.Stat(partPath(dst)); !os.IsNotExist(err) {
+		t.Fatalf("expected partial file removed, err=%v", err)
+	}
+	if _, err := os.Stat(metaPath(dst)); !os.IsNotExist(err) {
+		t.Fatalf("expected meta file removed, err=%v", err)
+	}
+}
+
+func TestRemoveCompletedDeletesFinalFile(t *testing.T) {
+	data := makeData(128 * 1024)
+	srv := rangeServer(t, data, true, 0)
+	defer srv.Close()
+
+	updates := make(chan TaskInfo, 256)
+	e := newTestEngine(updates)
+	defer e.Shutdown()
+
+	dst := filepath.Join(t.TempDir(), "out.bin")
+	if _, err := e.Add(AddOptions{ID: "t1", URL: srv.URL, SavePath: dst, Connections: 2, AutoStart: true}); err != nil {
+		t.Fatal(err)
+	}
+	info := waitForStatus(t, updates, StatusCompleted, StatusError)
+	if info.Status != StatusCompleted {
+		t.Fatalf("status=%s err=%s", info.Status, info.Error)
+	}
+	if err := e.Remove("t1", true); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if _, err := os.Stat(dst); !os.IsNotExist(err) {
+		t.Fatalf("expected final file removed, err=%v", err)
+	}
+}
+
+func TestPauseQueuedTask(t *testing.T) {
+	updates := make(chan TaskInfo, 16)
+	e := NewEngine(Config{
+		MaxConcurrent: 1,
+		ClientFactory: func(proxy.Settings) *http.Client { return &http.Client{Timeout: 30 * time.Second} },
+		OnUpdate: func(info TaskInfo) {
+			select {
+			case updates <- info:
+			default:
+			}
+		},
+	})
+	defer e.Shutdown()
+
+	dst := filepath.Join(t.TempDir(), "out.bin")
+	if _, err := e.Add(AddOptions{ID: "t1", URL: "http://127.0.0.1/never", SavePath: dst, AutoStart: false}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Start("t1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Pause("t1"); err != nil {
+		t.Fatal(err)
+	}
+	info, err := e.Get("t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Status != StatusPaused {
+		t.Fatalf("expected paused, got %s", info.Status)
+	}
+}
+
+func TestTaskProxyPersistsAcrossRecord(t *testing.T) {
+	want := proxy.Settings{Mode: proxy.ModeCustom, URL: "socks5://127.0.0.1:1080", Username: "u", Password: "p"}
+	task := TaskFromRecord((&Task{
+		ID: "t1", URL: "https://example.com/file", SavePath: "file.bin", Status: StatusPaused,
+		Proxy: want, CreatedAt: time.Now(),
+	}).Record())
+	if task.Proxy != want {
+		t.Fatalf("proxy mismatch: got %+v want %+v", task.Proxy, want)
+	}
 }

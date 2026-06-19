@@ -45,6 +45,11 @@ func removePartial(savePath string) {
 	_ = os.Remove(partPath(savePath))
 }
 
+// removeFinal deletes the completed target file, if present.
+func removeFinal(savePath string) {
+	_ = os.Remove(savePath)
+}
+
 // finalize closes the file and renames the .part file to its final name,
 // replacing any existing file at the destination.
 func finalize(w *fileWriter, savePath string) error {
