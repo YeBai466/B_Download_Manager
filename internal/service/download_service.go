@@ -7,10 +7,12 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -108,6 +110,10 @@ func New(dbPath string, extFiles fs.FS) (*DownloadService, error) {
 
 // ServiceStartup restores persisted tasks and starts the takeover server.
 func (s *DownloadService) ServiceStartup(ctx context.Context, _ application.ServiceOptions) error {
+	// Wipe any installer left in the update tmp folder by a previous in-app
+	// update (completed or cancelled) so it doesn't linger in the install dir.
+	s.CleanupUpdateTmp()
+
 	recs, err := s.store.LoadTasks()
 	if err != nil {
 		return err
@@ -501,23 +507,110 @@ func (s *DownloadService) CheckForUpdates() (updates.Result, error) {
 	return updates.Check(ctx, Version)
 }
 
-// DownloadUpdate adds the new release's installer as a download task and starts
-// it immediately, then focuses the main window — so "Download Update" pulls the
-// installer through the app itself instead of bouncing the user to a browser.
-// The completed installer auto-detects the existing install location and upgrades
-// in place. Returns an error (so the UI can fall back to the release page) when no
-// direct installer URL is available.
-func (s *DownloadService) DownloadUpdate(downloadURL string) (downloader.TaskInfo, error) {
+// DownloadUpdate downloads the new release's installer directly into a "tmp"
+// folder under the app's own install directory (NOT as a regular download task),
+// then launches it through the shell so Windows shows the UAC prompt the
+// admin-level NSIS installer requires. The installer closes the running app
+// itself (taskkill) and upgrades in place; on the next launch the updated app
+// wipes the leftover tmp folder via CleanupUpdateTmp. Returns an error (so the
+// UI can fall back to the release page) when no installer URL is available or
+// the download/launch fails. Blocks until the installer has been launched.
+func (s *DownloadService) DownloadUpdate(downloadURL string) error {
 	url := strings.TrimSpace(downloadURL)
 	if url == "" {
-		return downloader.TaskInfo{}, fmt.Errorf("没有可用的安装包下载地址")
+		return fmt.Errorf("没有可用的安装包下载地址")
 	}
-	info, err := s.AddURL(AddRequest{URL: url, AutoStart: true})
+
+	tmpDir, err := s.updateTmpDir()
 	if err != nil {
-		return downloader.TaskInfo{}, err
+		return err
 	}
-	s.focusWindow()
-	return info, nil
+	// Start from a clean slate so a previous, interrupted attempt can't leave a
+	// stale or partial installer behind.
+	_ = os.RemoveAll(tmpDir)
+	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
+		return fmt.Errorf("创建临时目录失败: %w", err)
+	}
+	dest := filepath.Join(tmpDir, installerName(url))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	if err := s.downloadFile(ctx, url, dest); err != nil {
+		_ = os.RemoveAll(tmpDir)
+		return fmt.Errorf("下载安装包失败: %w", err)
+	}
+
+	if err := openInShell(dest); err != nil {
+		return fmt.Errorf("启动安装程序失败: %w", err)
+	}
+	return nil
+}
+
+// updateTmpDir returns "<installDir>/tmp" — the folder update installers are
+// downloaded into. The install directory is the directory of the running
+// executable.
+func (s *DownloadService) updateTmpDir() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("无法定位程序目录: %w", err)
+	}
+	return filepath.Join(filepath.Dir(exe), "tmp"), nil
+}
+
+// CleanupUpdateTmp removes the update "tmp" folder (and any installer left in
+// it). It runs on startup so a completed or cancelled in-app update leaves
+// nothing behind in the install directory.
+func (s *DownloadService) CleanupUpdateTmp() {
+	if dir, err := s.updateTmpDir(); err == nil {
+		_ = os.RemoveAll(dir)
+	}
+}
+
+// installerName derives a safe ".exe" file name from the download URL, falling
+// back to a generic name when the URL has no usable .exe basename.
+func installerName(rawURL string) string {
+	name := rawURL
+	if i := strings.IndexAny(name, "?#"); i >= 0 {
+		name = name[:i]
+	}
+	name = path.Base(name)
+	if name == "" || name == "." || name == "/" || !strings.HasSuffix(strings.ToLower(name), ".exe") {
+		return "update-installer.exe"
+	}
+	return filepath.Base(name)
+}
+
+// downloadFile streams url to dest using the configured proxy-aware client.
+func (s *DownloadService) downloadFile(ctx context.Context, url, dest string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", "BetterDownloadManager-Updater")
+
+	s.mu.RLock()
+	px := s.settings.Proxy
+	s.mu.RUnlock()
+
+	resp, err := s.newClientForProxy(px).Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("服务器返回 %s", resp.Status)
+	}
+
+	f, err := os.Create(dest)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		f.Close()
+		_ = os.Remove(dest)
+		return err
+	}
+	return f.Close()
 }
 
 // OpenURL opens a URL in the user's default browser (used for the release page

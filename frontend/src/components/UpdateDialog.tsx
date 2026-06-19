@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { api } from "../api";
 import { t } from "../i18n";
 
@@ -17,18 +18,24 @@ interface Props {
 }
 
 // UpdateDialog shows the new version and its release notes (changelog). The
-// "Download Update" button pulls the installer through the app itself (a normal
-// download task) rather than opening a browser; running it upgrades in place and
-// preserves all data/settings (they live in %AppData%, not the install dir).
+// "Download Update" button downloads the installer straight into a tmp folder
+// under the install dir and auto-runs it (no download task); running it upgrades
+// in place and preserves all data/settings (they live in %AppData%, not the
+// install dir). On failure it falls back to opening the release page.
 export default function UpdateDialog({ info, onClose }: Props) {
+  const [busy, setBusy] = useState(false);
+
   const download = async () => {
     if (info.downloadUrl) {
+      setBusy(true);
       try {
         await api.downloadUpdate(info.downloadUrl);
         onClose();
         return;
       } catch {
         // Fall through to opening the release page in the browser.
+      } finally {
+        setBusy(false);
       }
     }
     api.openURL(info.releaseUrl || info.downloadUrl);
@@ -51,9 +58,9 @@ export default function UpdateDialog({ info, onClose }: Props) {
           </div>
         </div>
         <div className="actions">
-          <button className="btn" onClick={onClose}>{t("upd.later")}</button>
-          {info.releaseUrl && <button className="btn" onClick={() => api.openURL(info.releaseUrl)}>{t("upd.viewRelease")}</button>}
-          <button className="btn primary" onClick={download}>{t("upd.download")}</button>
+          <button className="btn" onClick={onClose} disabled={busy}>{t("upd.later")}</button>
+          {info.releaseUrl && <button className="btn" onClick={() => api.openURL(info.releaseUrl)} disabled={busy}>{t("upd.viewRelease")}</button>}
+          <button className="btn primary" onClick={download} disabled={busy}>{busy ? t("upd.downloading") : t("upd.download")}</button>
         </div>
       </div>
     </div>
