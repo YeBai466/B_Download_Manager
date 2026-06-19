@@ -1,4 +1,5 @@
 import * as Ico from "../icons";
+import { t } from "../i18n";
 
 interface Props {
   canResume: boolean;
@@ -38,19 +39,19 @@ function Btn({
 export default function Toolbar(p: Props) {
   return (
     <div className="toolbar">
-      <Btn icon={<Ico.AddUrl />} label="添加 URL" onClick={p.onAdd} />
+      <Btn icon={<Ico.AddUrl />} label={t("tb.addUrl")} onClick={p.onAdd} />
       <div className="tb-sep" />
-      <Btn icon={<Ico.Resume />} label="开始" onClick={p.onResume} disabled={!p.canResume} />
-      <Btn icon={<Ico.Stop />} label="暂停" onClick={p.onStop} disabled={!p.canStop} />
-      <Btn icon={<Ico.StartAll />} label="全部开始" onClick={p.onStartAll} />
-      <Btn icon={<Ico.StopAll />} label="全部暂停" onClick={p.onStopAll} />
+      <Btn icon={<Ico.Resume />} label={t("tb.start")} onClick={p.onResume} disabled={!p.canResume} />
+      <Btn icon={<Ico.Stop />} label={t("tb.pause")} onClick={p.onStop} disabled={!p.canStop} />
+      <Btn icon={<Ico.StartAll />} label={t("tb.startAll")} onClick={p.onStartAll} />
+      <Btn icon={<Ico.StopAll />} label={t("tb.pauseAll")} onClick={p.onStopAll} />
       <div className="tb-sep" />
-      <Btn icon={<Ico.Delete />} label="删除" onClick={p.onDelete} disabled={!p.hasSelection} />
-      <Btn icon={<Ico.DeleteDone />} label="删除已完成" onClick={p.onDeleteCompleted} disabled={!p.hasCompleted} />
+      <Btn icon={<Ico.Delete />} label={t("tb.delete")} onClick={p.onDelete} disabled={!p.hasSelection} />
+      <Btn icon={<Ico.DeleteDone />} label={t("tb.deleteCompleted")} onClick={p.onDeleteCompleted} disabled={!p.hasCompleted} />
       <div className="tb-sep" />
-      <Btn icon={<Ico.FolderOpen />} label="打开目录" onClick={p.onOpenFolder} disabled={!p.hasSelection} />
+      <Btn icon={<Ico.FolderOpen />} label={t("tb.openFolder")} onClick={p.onOpenFolder} disabled={!p.hasSelection} />
       <div className="tb-spacer" />
-      <Btn icon={<Ico.Options />} label="选项" onClick={p.onOptions} />
+      <Btn icon={<Ico.Options />} label={t("tb.options")} onClick={p.onOptions} />
     </div>
   );
 }

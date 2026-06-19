@@ -39,9 +39,11 @@ func main() {
 		log.Fatal("init service:", err)
 	}
 
+	lang := svc.GetSettings().Language
+
 	app := application.New(application.Options{
 		Name:        "B Download Manager",
-		Description: "仿 IDM 多线程下载器",
+		Description: tr(lang, "仿 IDM 多线程下载器", "IDM-style multithreaded downloader"),
 		Services: []application.Service{
 			application.NewService(svc),
 		},
@@ -81,14 +83,24 @@ func main() {
 		window.Hide()
 	})
 
-	setupTray(app, window)
+	setupTray(app, window, lang)
 
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func setupTray(app *application.App, window application.Window) {
+// tr picks the English string when the saved UI language is "en", otherwise the
+// Chinese default. Native chrome (tray, titles) is localized at startup; an
+// in-app language change takes effect on the next launch.
+func tr(lang, zh, en string) string {
+	if lang == "en" {
+		return en
+	}
+	return zh
+}
+
+func setupTray(app *application.App, window application.Window, lang string) {
 	tray := app.SystemTray.New()
 	if len(trayIcon) > 0 {
 		tray.SetIcon(trayIcon)
@@ -96,12 +108,12 @@ func setupTray(app *application.App, window application.Window) {
 	tray.SetTooltip("B Download Manager")
 
 	menu := application.NewMenu()
-	menu.Add("显示主窗口").OnClick(func(*application.Context) {
+	menu.Add(tr(lang, "显示主窗口", "Show Window")).OnClick(func(*application.Context) {
 		window.Show()
 		window.Focus()
 	})
 	menu.AddSeparator()
-	menu.Add("退出").OnClick(func(*application.Context) {
+	menu.Add(tr(lang, "退出", "Quit")).OnClick(func(*application.Context) {
 		app.Quit()
 	})
 	tray.SetMenu(menu)

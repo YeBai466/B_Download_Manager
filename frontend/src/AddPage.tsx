@@ -2,8 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import { Window } from "@wailsio/runtime";
 import "./styles.css";
 import { api, onEvent, EVT_TASK_UPDATE, type Settings, type TaskInfo } from "./api";
-import { formatBytes, formatSpeed, formatETA, statusLabels } from "./format";
+import { formatBytes, formatSpeed, formatETA, statusLabel } from "./format";
 import { categoryLabel } from "./components/Sidebar";
+import { t as tr, setLang, useLang } from "./i18n";
 
 type Mode = "form" | "progress";
 type ProxySettings = Settings["proxy"];
@@ -22,6 +23,7 @@ function cleanHeaders(input: { [_ in string]?: string } | null | undefined): Rec
 // the user starts a download it stays open and shows live multi-thread progress
 // (IDM-style) instead of returning to the main window.
 export default function AddPage() {
+  useLang(); // re-render on language change
   const [mode, setMode] = useState<Mode>("form");
 
   const [url, setUrl] = useState("");
@@ -88,6 +90,7 @@ export default function AddPage() {
   useEffect(() => {
     api.categories().then((c) => setCategories(c ?? []));
     api.getSettings().then((s) => {
+      setLang(s.language);
       const nextProxy = {
         mode: s.proxy.mode || ("system" as ProxySettings["mode"]),
         url: s.proxy.url || "",
@@ -132,7 +135,7 @@ export default function AddPage() {
 
   const start = async () => {
     if (!url.trim()) {
-      setError("请输入下载地址");
+      setError(tr("add.needUrl"));
       return;
     }
     try {
@@ -146,7 +149,7 @@ export default function AddPage() {
 
   const later = async () => {
     if (!url.trim()) {
-      setError("请输入下载地址");
+      setError(tr("add.needUrl"));
       return;
     }
     try {
@@ -173,7 +176,7 @@ export default function AddPage() {
     <div className="addwin">
       <div className="addwin-body">
         <div className="field">
-          <label>下载地址</label>
+          <label>{tr("add.url")}</label>
           <div className="row">
             <input
               type="text"
@@ -184,30 +187,30 @@ export default function AddPage() {
               onBlur={(e) => probe(e.target.value)}
             />
             <button className="btn" onClick={() => probe(url)} disabled={probing}>
-              {probing ? "检测中..." : "检测"}
+              {probing ? tr("add.detecting") : tr("add.detect")}
             </button>
           </div>
         </div>
 
         <div className="field">
-          <label>文件名</label>
+          <label>{tr("add.filename")}</label>
           <input type="text" value={filename} onChange={(e) => setFilename(e.target.value)} />
           <span className="hint">
-            大小：{formatBytes(size)}
-            {resumable !== null && <> · {resumable ? "支持断点续传（多线程）" : "不支持续传（单线程）"}</>}
+            {tr("add.sizeLabel", { size: formatBytes(size) })}
+            {resumable !== null && <> · {resumable ? tr("add.resumableYes") : tr("add.resumableNo")}</>}
           </span>
         </div>
 
         <div className="field">
-          <label>分类</label>
+          <label>{tr("add.category")}</label>
           <select value={category} onChange={(e) => onCategoryChange(e.target.value)}>
-            <option value="">（自动识别）</option>
+            <option value="">{tr("add.categoryAuto")}</option>
             {categories.map((c) => <option key={c} value={c}>{categoryLabel(c)}</option>)}
           </select>
         </div>
 
         <div className="field">
-          <label>保存到（不存在的目录会自动创建）</label>
+          <label>{tr("add.saveTo")}</label>
           <div className="row">
             <input
               type="text"
@@ -217,13 +220,13 @@ export default function AddPage() {
                 setDirEdited(true);
               }}
             />
-            <button className="btn" onClick={pickFolder}>浏览...</button>
+            <button className="btn" onClick={pickFolder}>{tr("common.browse")}</button>
           </div>
-          <span className="hint">完整路径：{saveDir ? `${saveDir}\\${filename || "（文件名）"}` : "（未设置）"}</span>
+          <span className="hint">{tr("add.fullPath", { path: saveDir ? `${saveDir}\\${filename || tr("add.placeholderName")}` : tr("add.pathUnset") })}</span>
         </div>
 
         <div className="field">
-          <label>连接数（线程）</label>
+          <label>{tr("add.connections")}</label>
           <input
             type="number"
             min={1}
@@ -234,37 +237,37 @@ export default function AddPage() {
         </div>
 
         <div className="field">
-          <label>代理方式</label>
+          <label>{tr("add.proxyMode")}</label>
           <select value={proxy.mode || "system"} onChange={(e) => setProxy({ ...proxy, mode: e.target.value as ProxySettings["mode"] })}>
-            <option value="system">使用系统代理（默认）</option>
-            <option value="none">不使用代理（直连）</option>
-            <option value="custom">自定义代理</option>
+            <option value="system">{tr("proxy.system")}</option>
+            <option value="none">{tr("proxy.none")}</option>
+            <option value="custom">{tr("proxy.custom")}</option>
           </select>
         </div>
 
         {proxy.mode === "custom" && (
           <>
             <div className="field">
-              <label>代理地址</label>
+              <label>{tr("add.proxyUrl")}</label>
               <input
                 type="text"
-                placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080"
+                placeholder="http://127.0.0.1:7890 / socks5://127.0.0.1:1080"
                 value={proxy.url || ""}
                 onChange={(e) => setProxy({ ...proxy, url: e.target.value })}
               />
             </div>
             <div className="field">
-              <label>认证（可选）</label>
+              <label>{tr("add.proxyAuth")}</label>
               <div className="row">
                 <input
                   type="text"
-                  placeholder="用户名"
+                  placeholder={tr("add.username")}
                   value={proxy.username || ""}
                   onChange={(e) => setProxy({ ...proxy, username: e.target.value })}
                 />
                 <input
                   type="text"
-                  placeholder="密码"
+                  placeholder={tr("add.password")}
                   value={proxy.password || ""}
                   onChange={(e) => setProxy({ ...proxy, password: e.target.value })}
                 />
@@ -276,7 +279,7 @@ export default function AddPage() {
         <div className="field">
           <label className="checkbox">
             <input type="checkbox" checked={rememberProxy} onChange={(e) => setRememberProxy(e.target.checked)} />
-            记住本次代理选择
+            {tr("add.rememberProxy")}
           </label>
         </div>
 
@@ -284,9 +287,9 @@ export default function AddPage() {
       </div>
 
       <div className="addwin-actions">
-        <button className="btn" onClick={close}>取消</button>
-        <button className="btn" onClick={later}>稍后下载</button>
-        <button className="btn primary" onClick={start}>立即下载</button>
+        <button className="btn" onClick={close}>{tr("common.cancel")}</button>
+        <button className="btn" onClick={later}>{tr("add.later")}</button>
+        <button className="btn primary" onClick={start}>{tr("add.now")}</button>
       </div>
     </div>
   );
@@ -310,13 +313,13 @@ function ProgressView({ task: t, onClose }: { task: TaskInfo; onClose: () => voi
     <div className="addwin">
       <div className="addwin-body">
         <div className="info-grid" style={{ marginBottom: 14 }}>
-          <span className="k">文件名</span><span className="v" title={t.filename}>{t.filename}</span>
-          <span className="k">保存到</span><span className="v" title={t.savePath}>{t.savePath}</span>
-          <span className="k">大小</span><span className="v">{formatBytes(t.totalSize)}</span>
-          <span className="k">已下载</span><span className="v">{formatBytes(t.downloaded)}{pct >= 0 ? `（${pct}%）` : ""}</span>
-          <span className="k">速度</span><span className="v">{t.status === "downloading" ? formatSpeed(t.speed) : "-"}</span>
-          <span className="k">剩余</span><span className="v">{t.status === "downloading" ? formatETA(t.etaSeconds) : "-"}</span>
-          <span className="k">状态</span><span className="v">{statusLabels[t.status] ?? t.status}{t.error ? ` - ${t.error}` : ""}</span>
+          <span className="k">{tr("pd.filename")}</span><span className="v" title={t.filename}>{t.filename}</span>
+          <span className="k">{tr("pd.saveTo")}</span><span className="v" title={t.savePath}>{t.savePath}</span>
+          <span className="k">{tr("pd.size")}</span><span className="v">{formatBytes(t.totalSize)}</span>
+          <span className="k">{tr("add.downloaded")}</span><span className="v">{formatBytes(t.downloaded)}{pct >= 0 ? `（${pct}%）` : ""}</span>
+          <span className="k">{tr("pd.speed")}</span><span className="v">{t.status === "downloading" ? formatSpeed(t.speed) : "-"}</span>
+          <span className="k">{tr("add.remaining")}</span><span className="v">{t.status === "downloading" ? formatETA(t.etaSeconds) : "-"}</span>
+          <span className="k">{tr("pd.status")}</span><span className="v">{statusLabel(t.status)}{t.error ? ` - ${t.error}` : ""}</span>
         </div>
 
         <div className="bar" style={{ height: 18 }}>
@@ -324,11 +327,11 @@ function ProgressView({ task: t, onClose }: { task: TaskInfo; onClose: () => voi
             className={`fill${t.status === "paused" ? " paused" : t.status === "error" ? " err" : ""}`}
             style={{ width: pct >= 0 ? `${pct}%` : "0%" }}
           />
-          <div className="label">{pct >= 0 ? `${pct}%` : statusLabels[t.status]}</div>
+          <div className="label">{pct >= 0 ? `${pct}%` : statusLabel(t.status)}</div>
         </div>
 
         <div style={{ marginTop: 14, fontSize: 12, color: "#44505f", fontWeight: 500 }}>
-          多线程连接（{segs.length}）
+          {tr("add.threads", { n: segs.length })}
         </div>
         <div className="seg-list">
           {segs.map((s) => {
@@ -339,7 +342,7 @@ function ProgressView({ task: t, onClose }: { task: TaskInfo; onClose: () => voi
               <div className="seg-row" key={s.index}>
                 <span className="seg-idx">
                   <span className={`seg-dot ${segPct >= 100 ? "ok" : segActive ? "run" : "idle"}`} />
-                  线程 {s.index + 1}
+                  {tr("pd.thread", { n: s.index + 1 })}
                 </span>
                 <span className="seg-bar"><span className="seg-fill" style={{ width: `${segPct}%` }} /></span>
                 <span className="seg-pct">{segPct}%</span>
@@ -352,16 +355,16 @@ function ProgressView({ task: t, onClose }: { task: TaskInfo; onClose: () => voi
       <div className="addwin-actions">
         {done ? (
           <>
-            <button className="btn" onClick={() => api.openFile(t.id)}>打开文件</button>
-            <button className="btn" onClick={() => api.openFolder(t.id)}>打开文件夹</button>
+            <button className="btn" onClick={() => api.openFile(t.id)}>{tr("add.openFile")}</button>
+            <button className="btn" onClick={() => api.openFolder(t.id)}>{tr("add.openFolder")}</button>
           </>
         ) : active ? (
-          <button className="btn" onClick={() => api.pauseTask(t.id)}>暂停</button>
+          <button className="btn" onClick={() => api.pauseTask(t.id)}>{tr("common.pause")}</button>
         ) : (
-          <button className="btn" onClick={() => api.startTask(t.id)}>继续</button>
+          <button className="btn" onClick={() => api.startTask(t.id)}>{tr("common.resume")}</button>
         )}
-        {!done && <button className="btn danger" onClick={() => { api.removeTask(t.id, true); onClose(); }}>取消下载</button>}
-        <button className="btn primary" onClick={onClose}>{done ? "关闭" : "隐藏（后台继续）"}</button>
+        {!done && <button className="btn danger" onClick={() => { api.removeTask(t.id, true); onClose(); }}>{tr("add.cancelDownload")}</button>}
+        <button className="btn primary" onClick={onClose}>{done ? tr("common.close") : tr("add.hide")}</button>
       </div>
     </div>
   );

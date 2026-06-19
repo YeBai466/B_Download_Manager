@@ -17,8 +17,12 @@ import ProgressDialog from "./components/ProgressDialog";
 import ExtPromptDialog from "./components/ExtPromptDialog";
 import UpdateDialog, { type UpdateInfo } from "./components/UpdateDialog";
 import { formatSpeed } from "./format";
+import { t, setLang, useLang } from "./i18n";
+
+const APP_VERSION = "1.0.2";
 
 export default function App() {
+  useLang(); // re-render the whole tree when the language changes
   const [tasks, setTasks] = useState<Map<string, TaskInfo>>(new Map());
   const [categories, setCategories] = useState<string[]>([]);
   const [filter, setFilter] = useState<Filter>({ kind: "all" });
@@ -45,6 +49,7 @@ export default function App() {
     reload();
     api.categories().then((c) => setCategories(c ?? []));
     api.getSettings().then(async (cfg) => {
+      setLang(cfg.language);
       setSettings(cfg);
       // On startup, offer the one-time manual extension install (unless ignored).
       if (cfg.takeoverEnabled && !cfg.extPromptIgnored) {
@@ -134,9 +139,9 @@ export default function App() {
     try {
       const r = await api.checkForUpdates();
       if (r.hasUpdate) setUpdate(r as UpdateInfo);
-      else alert(`已是最新版本（v${r.current}）`);
+      else alert(t("update.latestAlready", { v: r.current }));
     } catch (e: any) {
-      alert("检查更新失败：" + String(e?.message ?? e));
+      alert(t("update.checkFailed", { err: String(e?.message ?? e) }));
     }
   };
 
@@ -145,28 +150,28 @@ export default function App() {
       <MenuBar
         menus={[
           {
-            title: "任务",
+            title: t("menu.task"),
             items: [
-              { label: "添加 URL…", shortcut: "Ctrl+N", onClick: openAdd },
+              { label: t("menu.addUrl"), shortcut: "Ctrl+N", onClick: openAdd },
               { label: "", separator: true },
-              { label: "全部开始", onClick: () => api.startAll() },
-              { label: "全部暂停", onClick: () => api.pauseAll() },
+              { label: t("menu.startAll"), onClick: () => api.startAll() },
+              { label: t("menu.pauseAll"), onClick: () => api.pauseAll() },
               { label: "", separator: true },
-              { label: "删除已完成", onClick: deleteCompleted, disabled: !hasCompleted },
+              { label: t("menu.deleteCompleted"), onClick: deleteCompleted, disabled: !hasCompleted },
             ],
           },
           {
-            title: "查看",
+            title: t("menu.view"),
             items: [
-              { label: "刷新列表", onClick: () => reload() },
-              { label: "选项…", onClick: () => setShowOptions(true) },
+              { label: t("menu.refresh"), onClick: () => reload() },
+              { label: t("menu.options"), onClick: () => setShowOptions(true) },
             ],
           },
           {
-            title: "帮助",
+            title: t("menu.help"),
             items: [
-              { label: "检查更新…", onClick: checkUpdateNow },
-              { label: "关于 B Download Manager", onClick: () => setShowAbout(true) },
+              { label: t("menu.checkUpdate"), onClick: checkUpdateNow },
+              { label: t("menu.about"), onClick: () => setShowAbout(true) },
             ],
           },
         ]}
@@ -205,8 +210,8 @@ export default function App() {
       </div>
 
       <div className="statusbar">
-        <span>共 {allTasks.length} 个任务</span>
-        <span>下载中 {activeCount}</span>
+        <span>{t("status.total", { n: allTasks.length })}</span>
+        <span>{t("status.active", { n: activeCount })}</span>
         <span className="sb-grow" />
         {totalSpeed > 0 && <span className="sb-speed">↓ {formatSpeed(totalSpeed)}</span>}
       </div>
@@ -233,14 +238,14 @@ export default function App() {
       {showAbout && (
         <div className="overlay" onMouseDown={() => setShowAbout(false)}>
           <div className="dialog" style={{ width: 380 }} onMouseDown={(e) => e.stopPropagation()}>
-            <div className="titlebar">关于</div>
+            <div className="titlebar">{t("about.title")}</div>
             <div className="content" style={{ textAlign: "center", lineHeight: 1.8 }}>
               <div style={{ fontSize: 16, fontWeight: 600 }}>B Download Manager</div>
-              <div>版本 1.0.2</div>
-              <div style={{ color: "var(--muted)", fontSize: 12 }}>Go + React (Wails v3) · 仿 IDM 多线程下载器</div>
+              <div>{t("about.version", { v: APP_VERSION })}</div>
+              <div style={{ color: "var(--muted)", fontSize: 12 }}>{t("about.tagline")}</div>
             </div>
             <div className="actions">
-              <button className="btn primary" onClick={() => setShowAbout(false)}>确定</button>
+              <button className="btn primary" onClick={() => setShowAbout(false)}>{t("common.ok")}</button>
             </div>
           </div>
         </div>

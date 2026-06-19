@@ -1,5 +1,6 @@
 import type { TaskInfo } from "../api";
 import * as Ico from "../icons";
+import { t } from "../i18n";
 
 export type Filter =
   | { kind: "all" }
@@ -48,10 +49,10 @@ export default function Sidebar({ categories, tasks, filter, onSelect }: Props) 
 
   return (
     <div className="sidebar">
-      <Item f={{ kind: "all" }} icon={<Ico.CatAll />} label="全部下载" count={counts.all} />
-      <Item f={{ kind: "active" }} icon={<Ico.CatUnfinished />} label="未完成" count={counts.active} />
-      <Item f={{ kind: "done" }} icon={<Ico.CatFinished />} label="已完成" count={counts.done} />
-      <div className="side-section">分类</div>
+      <Item f={{ kind: "all" }} icon={<Ico.CatAll />} label={t("side.all")} count={counts.all} />
+      <Item f={{ kind: "active" }} icon={<Ico.CatUnfinished />} label={t("side.active")} count={counts.active} />
+      <Item f={{ kind: "done" }} icon={<Ico.CatFinished />} label={t("side.done")} count={counts.done} />
+      <div className="side-section">{t("side.categories")}</div>
       {categories.map((c) => {
         const Icon = Ico.categoryIcon[c] ?? Ico.CatDocuments;
         return (
@@ -68,15 +69,9 @@ export default function Sidebar({ categories, tasks, filter, onSelect }: Props) 
   );
 }
 
-const labels: Record<string, string> = {
-  General: "常规",
-  Compressed: "压缩文件",
-  Documents: "文档",
-  Music: "音乐",
-  Video: "视频",
-  Programs: "程序",
-};
 function categoryLabel(c: string): string {
-  return labels[c] ?? c;
+  const key = `cat.${c}`;
+  const label = t(key);
+  return label === key ? c : label;
 }
 export { categoryLabel };

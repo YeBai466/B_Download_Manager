@@ -33,6 +33,7 @@ type Settings struct {
 	AutoStart        bool             `json:"autoStart"`        // launch at Windows login
 	StartMinimized   bool             `json:"startMinimized"`   // when autostarted, start hidden in tray
 	AutoCheckUpdate  bool             `json:"autoCheckUpdate"`  // check GitHub releases on startup
+	Language         string           `json:"language"`         // UI language: "zh" or "en"
 }
 
 // DefaultDownloadDir returns the user's Downloads folder, falling back to the
@@ -65,6 +66,7 @@ func Default() Settings {
 		AutoStart:        false,
 		StartMinimized:   true,
 		AutoCheckUpdate:  true,
+		Language:         "zh",
 	}
 }
 
@@ -92,5 +94,8 @@ func (s *Settings) Normalize() {
 	}
 	if s.Proxy.Mode == "" {
 		s.Proxy.Mode = proxy.ModeSystem
+	}
+	if s.Language != "en" {
+		s.Language = "zh"
 	}
 }

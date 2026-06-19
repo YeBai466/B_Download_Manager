@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import type { TaskInfo } from "../api";
-import { formatBytes, formatSpeed, formatETA, formatDate, statusLabels } from "../format";
+import { formatBytes, formatSpeed, formatETA, formatDate, statusLabel } from "../format";
 import * as Ico from "../icons";
+import { t as tr } from "../i18n";
 
 interface Props {
   tasks: TaskInfo[];
@@ -21,14 +22,14 @@ interface SortState { key: SortKey; dir: 1 | -1; }
 interface CtxMenu { x: number; y: number; task: TaskInfo; }
 
 function ProgressCell({ t }: { t: TaskInfo }) {
-  if (t.status === "completed") return <span className="status-text done">{statusLabels.completed}</span>;
-  if (t.status === "error") return <span className="status-text err" title={t.error}>{t.error || "错误"}</span>;
+  if (t.status === "completed") return <span className="status-text done">{statusLabel("completed")}</span>;
+  if (t.status === "error") return <span className="status-text err" title={t.error}>{t.error || tr("tbl.error")}</span>;
   const pct = t.progress >= 0 ? Math.round(t.progress * 100) : -1;
   const cls = t.status === "paused" ? "bar paused" : "bar";
   return (
     <div className={cls}>
       <div className="fill" style={{ width: pct >= 0 ? `${pct}%` : "0%" }} />
-      <div className="label">{pct >= 0 ? `${pct}%` : statusLabels[t.status] ?? t.status}</div>
+      <div className="label">{pct >= 0 ? `${pct}%` : statusLabel(t.status)}</div>
     </div>
   );
 }
@@ -74,8 +75,8 @@ export default function TaskTable(p: Props) {
       <div className="table-wrap">
         <div className="empty">
           <div className="big"><Ico.AddUrl size={48} /></div>
-          <div>暂无下载任务</div>
-          <div>点击「添加 URL」开始下载</div>
+          <div>{tr("tbl.empty")}</div>
+          <div>{tr("tbl.emptyHint")}</div>
         </div>
       </div>
     );
@@ -105,12 +106,12 @@ export default function TaskTable(p: Props) {
         </colgroup>
         <thead>
           <tr>
-            <th onClick={() => toggleSort("name")}>文件名{arrow("name")}</th>
-            <th onClick={() => toggleSort("size")}>大小{arrow("size")}</th>
-            <th onClick={() => toggleSort("status")}>状态{arrow("status")}</th>
-            <th>剩余时间</th>
-            <th>速度</th>
-            <th onClick={() => toggleSort("created")}>添加时间{arrow("created")}</th>
+            <th onClick={() => toggleSort("name")}>{tr("tbl.name")}{arrow("name")}</th>
+            <th onClick={() => toggleSort("size")}>{tr("tbl.size")}{arrow("size")}</th>
+            <th onClick={() => toggleSort("status")}>{tr("tbl.status")}{arrow("status")}</th>
+            <th>{tr("tbl.eta")}</th>
+            <th>{tr("tbl.speed")}</th>
+            <th onClick={() => toggleSort("created")}>{tr("tbl.added")}{arrow("created")}</th>
           </tr>
         </thead>
         <tbody>
@@ -160,16 +161,16 @@ function ContextMenu({ menu, p, close }: { menu: CtxMenu; p: Props; close: () =>
 
   return (
     <div className="ctx" style={style} onClick={(e) => e.stopPropagation()}>
-      {done && <div className="ctx-item" onClick={run(() => p.onOpenFile(t.id))}>打开</div>}
-      <div className="ctx-item" onClick={run(() => p.onOpenFolder(t.id))}>打开所在文件夹</div>
+      {done && <div className="ctx-item" onClick={run(() => p.onOpenFile(t.id))}>{tr("ctx.open")}</div>}
+      <div className="ctx-item" onClick={run(() => p.onOpenFolder(t.id))}>{tr("ctx.openFolder")}</div>
       <div className="ctx-sep" />
-      {!active && !done && <div className="ctx-item" onClick={run(() => p.onResume(t.id))}>继续下载</div>}
-      {active && <div className="ctx-item" onClick={run(() => p.onPause(t.id))}>暂停</div>}
-      {!done && <div className="ctx-item" onClick={run(() => p.onDetails(t.id))}>下载进度 / 属性</div>}
-      <div className="ctx-item" onClick={run(() => p.onCopyUrl(t.url))}>复制下载地址</div>
+      {!active && !done && <div className="ctx-item" onClick={run(() => p.onResume(t.id))}>{tr("ctx.resume")}</div>}
+      {active && <div className="ctx-item" onClick={run(() => p.onPause(t.id))}>{tr("ctx.pause")}</div>}
+      {!done && <div className="ctx-item" onClick={run(() => p.onDetails(t.id))}>{tr("ctx.details")}</div>}
+      <div className="ctx-item" onClick={run(() => p.onCopyUrl(t.url))}>{tr("ctx.copyUrl")}</div>
       <div className="ctx-sep" />
-      <div className="ctx-item" onClick={run(() => p.onRemove(t.id, false))}>从列表删除</div>
-      <div className="ctx-item danger" onClick={run(() => p.onRemove(t.id, true))}>删除并移除文件</div>
+      <div className="ctx-item" onClick={run(() => p.onRemove(t.id, false))}>{tr("ctx.removeFromList")}</div>
+      <div className="ctx-item danger" onClick={run(() => p.onRemove(t.id, true))}>{tr("ctx.deleteWithFile")}</div>
     </div>
   );
 }

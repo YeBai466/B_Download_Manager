@@ -296,7 +296,7 @@ func (s *DownloadService) openAddWindow(p AddPrefill) {
 	}
 	w := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:             AddWindowName,
-		Title:            "添加下载",
+		Title:            s.tr("添加下载", "Add Download"),
 		Width:            560,
 		Height:           500,
 		MinWidth:         460,
@@ -392,6 +392,18 @@ func (s *DownloadService) GetSettings() config.Settings {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.settings
+}
+
+// tr returns the English string when the saved UI language is "en", otherwise
+// the Chinese default. Used for native chrome (window titles, dialogs).
+func (s *DownloadService) tr(zh, en string) string {
+	s.mu.RLock()
+	lang := s.settings.Language
+	s.mu.RUnlock()
+	if lang == "en" {
+		return en
+	}
+	return zh
 }
 
 // SaveSettings persists new settings and applies side effects (takeover server).
@@ -608,7 +620,7 @@ func (s *DownloadService) ChooseFolder() (string, error) {
 	return app.Dialog.OpenFile().
 		CanChooseDirectories(true).
 		CanChooseFiles(false).
-		SetTitle("选择保存目录").
+		SetTitle(s.tr("选择保存目录", "Choose Save Folder")).
 		PromptForSingleSelection()
 }
 
